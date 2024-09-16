@@ -1,0 +1,13 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: home-automation
+resources:
+  # - database.yaml
+  # - home-assistant-ssh.sops.yaml
+  # - home-assistant-secrets.sops.yaml
+  - storage-class.yaml
+  - persistent-volume.yaml
+  - persistent-volume-claim.yaml
+  - helm-release.yaml

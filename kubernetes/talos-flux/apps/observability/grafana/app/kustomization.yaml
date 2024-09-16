@@ -5,7 +5,6 @@ kind: Kustomization
 namespace: observability
 resources:
   - grafana-admin.sops.yaml
-  - grafana-env.sops.yaml
   - helm-release.yaml
   - dashboards
 configMapGenerator:
