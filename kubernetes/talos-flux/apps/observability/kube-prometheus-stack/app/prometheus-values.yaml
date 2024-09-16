@@ -64,7 +64,7 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: ceph-block
+          storageClassName: openebs-hostpath
           resources:
             requests:
               storage: 10Gi
