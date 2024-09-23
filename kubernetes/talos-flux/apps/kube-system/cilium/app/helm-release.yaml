@@ -26,101 +26,74 @@ spec:
   uninstall:
     keepHistory: false
   values:
-    # https://artifacthub.io/packages/helm/cilium/cilium?modal=values
-    cluster:
-      name: ${SETTING_CLUSTERNAME}
-      id: 1
-
     autoDirectNodeRoutes: false ## true creates error: "auto-direct-node-routes cannot be used with tunneling."
-    bandwidthManager:
-      enabled: true
-      bbr: true
-    bpf:
-      masquerade: true
-      tproxy: true
+    # bandwidthManager:
+    #   enabled: true
+    #   bbr: true
+    # bpf:
+    #   masquerade: true
     bgp:
       enabled: false
-    cgroup:
-      autoMount:
-        enabled: false
-      hostRoot: /sys/fs/cgroup
-    devices: enx+
-    enableRuntimeDeviceDetection: true
+    containerRuntime:
+      integration: containerd
     endpointRoutes:
       enabled: true
-    hubble:
-      enabled: true
-      metrics:
-        enabled:
-          # - dns:query;ignoreAAAA
-          - drop
-          - tcp
-          - flow
-          - port-distribution
-          - icmp
-          - http
+      # hubble:
+      #   enabled: true
+      #   metrics:
+      #     enabled:
+      #       - dns:query;ignoreAAAA
+      #       - drop
+      #       - tcp
+      #       - flow
+      #       - port-distribution
+      #       - icmp
+      #       - http
 
-        serviceMonitor:
-          enabled: true
-        dashboards:
-          enabled: false
-          annotations:
-            grafana_folder: Cilium
+      # serviceMonitor:
+      #   enabled: false
+      # dashboards:
+      #   enabled: false
+      #   annotations:
+      #     grafana_folder: Cilium
       relay:
         enabled: true
         rollOutPods: true
-        prometheus:
-          serviceMonitor:
-            enabled: false
-      ui:
-        enabled: true
-        rollOutPods: true
-        # ingress:
-        #   enabled: true
-        #   className: traefik
-        #   annotations:
-        #     hajimari.io/enable: "true"
-        #     hajimari.io/appName: hubble
-        #     hajimari.io/icon: simple-icons:cilium
-        #     gethomepage.dev/enabled: "true"
-        #     gethomepage.dev/description: eBPF-based Networking, Observability, and Security
-        #     gethomepage.dev/group: Networking
-        #     gethomepage.dev/icon: cilium
-        #     gethomepage.dev/name: Hubble
-        #     gethomepage.dev/weight: "10" # optional
     ipam:
       mode: kubernetes
-    l2announcements:
-      enabled: false
-      # leaseDuration: 120s
-      # leaseRenewDeadline: 60s
-      # leaseRetryPeriod: 1s
-    loadBalancer:
-      algorithm: maglev
-      mode: dsr
+    hostFirewall:
+      enabled: true
+    hubble:
+      relay:
+        enabled: true
+      ui:
+        enabled: true
+    kubeProxyReplacement: true
+    # loadBalancer:
+    #   algorithm: maglev
+    #   mode: dsr
     localRedirectPolicy: true
     operator:
-      replicas: 1
       rollOutPods: true
+      replicas: 1
       prometheus:
         enabled: true
         serviceMonitor:
-          enabled: true
+          enabled: false
       dashboards:
         enabled: true
         annotations:
           grafana_folder: cilium
-    prometheus:
-      enabled: true
-      serviceMonitor:
-        enabled: true
-        trustCRDsExist: true
+    # prometheus:
+    #   enabled: true
+    #   serviceMonitor:
+    #     enabled: false
+    #     trustCRDsExist: false
     dashboards:
       enabled: true
       annotations:
         grafana_folder: cilium
     rollOutCiliumPods: true
-    routingMode: native
     securityContext:
       privileged: true
       capabilities:
@@ -140,3 +113,9 @@ spec:
           - NET_ADMIN
           - SYS_ADMIN
           - SYS_RESOURCE
+    cgroup:
+      autoMount:
+        enabled: true
+      hostRoot: /sys/fs/cgroup
+    k8sServiceHost: api.kluster.klingel.cloud
+    k8sServicePort: "6443"
