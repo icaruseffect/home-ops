@@ -1,5 +1,5 @@
 ---
-autoDirectNodeRoutes: true
+autoDirectNodeRoutes: false ## true creates error: "auto-direct-node-routes cannot be used with tunneling."
 # bandwidthManager:
 #   enabled: true
 #   bbr: true
@@ -42,9 +42,9 @@ hubble:
   ui:
     enabled: true
 kubeProxyReplacement: true
-loadBalancer:
-  algorithm: maglev
-  mode: dsr
+# loadBalancer:
+#   algorithm: maglev
+#   mode: dsr
 localRedirectPolicy: true
 operator:
   rollOutPods: true
@@ -90,5 +90,5 @@ cgroup:
   autoMount:
     enabled: true
   hostRoot: /sys/fs/cgroup
-k8sServiceHost: api.kluster."$(SECRET_DOMAIN)"
+k8sServiceHost: api.kluster.klingel.cloud
 k8sServicePort: "6443"

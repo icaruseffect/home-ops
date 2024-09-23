@@ -7,16 +7,16 @@ kind: Kustomization
 resources:
   - github.com/fluxcd/flux2/manifests/install?ref=v2.3.0
 patches:
-  # Remove the network policies that does not work with k3s
-  - patch: |
-      $patch: delete
-      apiVersion: networking.k8s.io/v1
-      kind: NetworkPolicy
-      metadata:
-        name: not-used
-    target:
-      group: networking.k8s.io
-      kind: NetworkPolicy
+  # # Remove the network policies that does not work with k3s
+  # - patch: |
+  #     $patch: delete
+  #     apiVersion: networking.k8s.io/v1
+  #     kind: NetworkPolicy
+  #     metadata:
+  #       name: not-used
+  #   target:
+  #     group: networking.k8s.io
+  #     kind: NetworkPolicy
   # prevent deletion of namespace by flux
   - patch: |
       - op: add
@@ -37,27 +37,27 @@ patches:
   #     group: apiextensions.k8s.io
   #     kind: CustomResourceDefinition
   #     name: imageupdateautomations.image.toolkit.fluxcd.io
-  - patch: |
-      $patch: delete
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: image-automation-controller
-    target:
-      kind: Deployment
-      version: v1
-      name: image-automation-controller
+  # - patch: |
+  #     $patch: delete
+  #     apiVersion: apps/v1
+  #     kind: Deployment
+  #     metadata:
+  #       name: image-automation-controller
+  #   target:
+  #     kind: Deployment
+  #     version: v1
+  #     name: image-automation-controller
   # Remove image-reflector-controller as we dont use it
-  - patch: |
-      $patch: delete
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: image-reflector-controller
-    target:
-      kind: Deployment
-      version: v1
-      name: image-reflector-controller
+  # - patch: |
+  #     $patch: delete
+  #     apiVersion: apps/v1
+  #     kind: Deployment
+  #     metadata:
+  #       name: image-reflector-controller
+  #   target:
+  #     kind: Deployment
+  #     version: v1
+  #     name: image-reflector-controller
   # Increase the number of reconciliations that can be performed in parallel and bump the resources limits
   # https://fluxcd.io/flux/cheatsheets/bootstrap/#increase-the-number-of-workers
   - patch: |

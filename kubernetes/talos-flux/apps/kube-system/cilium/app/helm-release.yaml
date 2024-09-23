@@ -44,7 +44,7 @@ spec:
       autoMount:
         enabled: false
       hostRoot: /sys/fs/cgroup
-    devices: eth0
+    devices: enx+
     enableRuntimeDeviceDetection: true
     endpointRoutes:
       enabled: true
@@ -52,7 +52,7 @@ spec:
       enabled: true
       metrics:
         enabled:
-          - dns:query;ignoreAAAA
+          # - dns:query;ignoreAAAA
           - drop
           - tcp
           - flow
@@ -75,19 +75,19 @@ spec:
       ui:
         enabled: true
         rollOutPods: true
-        ingress:
-          enabled: true
-          className: traefik
-          annotations:
-            hajimari.io/enable: "true"
-            hajimari.io/appName: hubble
-            hajimari.io/icon: simple-icons:cilium
-            gethomepage.dev/enabled: "true"
-            gethomepage.dev/description: eBPF-based Networking, Observability, and Security
-            gethomepage.dev/group: Networking
-            gethomepage.dev/icon: cilium
-            gethomepage.dev/name: Hubble
-            gethomepage.dev/weight: "10" # optional
+        # ingress:
+        #   enabled: true
+        #   className: traefik
+        #   annotations:
+        #     hajimari.io/enable: "true"
+        #     hajimari.io/appName: hubble
+        #     hajimari.io/icon: simple-icons:cilium
+        #     gethomepage.dev/enabled: "true"
+        #     gethomepage.dev/description: eBPF-based Networking, Observability, and Security
+        #     gethomepage.dev/group: Networking
+        #     gethomepage.dev/icon: cilium
+        #     gethomepage.dev/name: Hubble
+        #     gethomepage.dev/weight: "10" # optional
     ipam:
       mode: kubernetes
     l2announcements:

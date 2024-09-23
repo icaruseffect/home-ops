@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: metallb-helm-chart-value-overrides
-  namespace: fllux-system
+  namespace: flux-system
 data:
   values.yaml: |-
     # Default values for metallb.
@@ -84,13 +84,13 @@ data:
         # Scrape interval. If not set, the Prometheus default scrape interval is used.
         interval:
 
-        # 	metric relabel configs to apply to samples before ingestion.
+        #   metric relabel configs to apply to samples before ingestion.
         metricRelabelings: []
         # - action: keep
         #   regex: 'kube_(daemonset|deployment|pod|namespace|node|statefulset).+'
         #   sourceLabels: [__name__]
 
-        # 	relabel configs to apply to samples before ingestion.
+        #   relabel configs to apply to samples before ingestion.
         relabelings: []
         # - sourceLabels: [__meta_kubernetes_pod_node_name]
         #   separator: ;
@@ -131,13 +131,13 @@ data:
         # Scrape interval. If not set, the Prometheus default scrape interval is used.
         interval:
 
-        # 	metric relabel configs to apply to samples before ingestion.
+        #   metric relabel configs to apply to samples before ingestion.
         metricRelabelings: []
         # - action: keep
         #   regex: 'kube_(daemonset|deployment|pod|namespace|node|statefulset).+'
         #   sourceLabels: [__name__]
 
-        # 	relabel configs to apply to samples before ingestion.
+        #   relabel configs to apply to samples before ingestion.
         relabelings: []
         # - sourceLabels: [__meta_kubernetes_pod_node_name]
         #   separator: ;

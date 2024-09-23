@@ -17,4 +17,4 @@ spec:
   secretRef:
     name: flux-system
   timeout: 60s
-  url: ssh://git@github.com/icaruseffect/home-ops
+  url: https://github.com/icaruseffect/home-ops.git
