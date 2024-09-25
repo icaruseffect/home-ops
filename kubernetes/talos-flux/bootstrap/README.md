@@ -14,4 +14,6 @@ kubectl kustomize --enable-helm kubernetes/talos-flux/bootstrap/cilium --helm-co
 
 ## metrics server
 
+```console
 kubectl kustomize --enable-helm kubernetes/talos-flux/bootstrap/metrics-server --helm-command=$(which helm) --helm-kube-version=1.30.3 | kubectl apply -n kube-system -f -
+```
