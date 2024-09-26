@@ -9,7 +9,7 @@ spec:
       chart: metallb
       sourceRef:
         kind: HelmRepository
-        name: metallb
+        name: metallb-charts
         namespace: flux-system
       version: 0.14.8
   driftDetection:
