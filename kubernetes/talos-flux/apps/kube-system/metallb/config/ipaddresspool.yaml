@@ -6,7 +6,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-    - $(SECRET_PUBLIC_SUBNET_IP4)
-    - $(SECRET_PUBLIC_SUBNET_IP6)
+    - "$(SECRET_PUBLIC_SUBNET_IP4)"
+    - "$(SECRET_PUBLIC_SUBNET_IP6)"
   autoAssign: true
   avoidBuggyIPs: true
