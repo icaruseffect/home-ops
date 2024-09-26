@@ -26,5 +26,5 @@ spec:
         protocol: UDP
       - port: "50000"
         protocol: TCP
-      - port: "50001"
+      - port: "50002"
         protocol: TCP
