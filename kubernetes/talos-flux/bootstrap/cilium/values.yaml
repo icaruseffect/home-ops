@@ -993,7 +993,7 @@ healthPort: 9879
 # -- Configure the host firewall.
 hostFirewall:
   # -- Enables the enforcement of host policies in the eBPF datapath.
-  enabled: false
+  enabled: true
 hostPort:
   # -- Enable hostPort service support.
   enabled: false
