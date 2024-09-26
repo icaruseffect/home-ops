@@ -9,3 +9,4 @@ resources:
   - ./metrics-server/flux-sync.yaml
   - ./snapshot-controller/flux-sync.yaml
   - ./metallb/flux-sync.yaml
+  - ./gateway/flux-sync.yaml
