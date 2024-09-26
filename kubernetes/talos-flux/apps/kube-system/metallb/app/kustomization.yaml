@@ -6,5 +6,4 @@ namespace: metallb-system
 resources:
   - ./namespace.yaml
   - ./release.yaml
-  - ./repository.yaml
   - ./values.yaml
