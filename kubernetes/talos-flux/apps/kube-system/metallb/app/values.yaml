@@ -1,9 +1,10 @@
 # configmap-metallb-helm-chart-value-overrides.yaml
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: metallb-helm-chart-value-overrides
-  namespace: flux-system
+  namespace: metallb-system
 data:
   values.yaml: |-
     # Default values for metallb.
