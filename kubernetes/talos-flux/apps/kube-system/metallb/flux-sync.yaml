@@ -35,7 +35,7 @@ spec:
       app.kubernetes.io/name: *app
   dependsOn:
     - name: apps-metallb
-  path: ./kubernetes/talos-flux/apps/kube-system/cilium/config
+  path: ./kubernetes/talos-flux/apps/kube-system/metallb/config
   prune: false # do not remove our network stack by accident!
   sourceRef:
     kind: GitRepository
