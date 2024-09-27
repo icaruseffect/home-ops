@@ -7,15 +7,13 @@ spec:
   description: "Allow a minimum set of required ports on ingress of worker nodes"
   nodeSelector:
     matchLabels:
-      type: ingress-worker
+      topology.kubernetes.io/zone: public
   ingress:
   - fromEntities:
     - remote-node
     - health
   - toPorts:
     - ports:
-      - port: "22"
-        protocol: TCP
       - port: "6443"
         protocol: TCP
       - port: "2379"
@@ -27,4 +25,8 @@ spec:
       - port: "50000"
         protocol: TCP
       - port: "50002"
+        protocol: TCP
+      - port: "80"
+        protocol: TCP
+      - port: "443"
         protocol: TCP
