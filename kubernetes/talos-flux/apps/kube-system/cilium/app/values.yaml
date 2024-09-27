@@ -997,7 +997,7 @@ hostFirewall:
   enabled: false
 hostPort:
   # -- Enable hostPort service support.
-  enabled: false
+  enabled: true
 # -- Configure socket LB
 socketLB:
   # -- Enable socket LB
