@@ -839,7 +839,7 @@ ingressController:
       #   kubernetes.io/os: linux
       #   kubernetes.io/hostname: kind-worker
       matchLabels:
-        topology.kubernetes.io/zone=public
+        topology.kubernetes.io/zone: public
 
 gatewayAPI:
   # -- Enable support for Gateway API in cilium
