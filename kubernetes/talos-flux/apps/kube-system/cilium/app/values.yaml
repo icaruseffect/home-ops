@@ -1824,7 +1824,7 @@ ipam:
 nodeIPAM:
   # -- Configure Node IPAM
   # ref: https://docs.cilium.io/en/stable/network/node-ipam/
-  enabled: false
+  enabled: true
 # @schema
 # type: [null, string]
 # @schema
