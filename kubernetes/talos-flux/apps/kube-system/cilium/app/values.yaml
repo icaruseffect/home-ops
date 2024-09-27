@@ -752,7 +752,7 @@ ingressController:
   enabled: true
   # -- Set cilium ingress controller to be the default ingress controller
   # This will let cilium ingress controller route entries without ingress class set
-  default: false
+  default: true
   # -- Default ingress load balancer mode
   # Supported values: shared, dedicated
   # For granular control, use the following annotations on the ingress resource:
@@ -799,12 +799,12 @@ ingressController:
     # type: [null, integer]
     # @schema
     # -- Configure a specific nodePort for insecure HTTP traffic on the shared LB service
-    insecureNodePort: ~
+    insecureNodePort: 80
     # @schema
     # type: [null, integer]
     # @schema
     # -- Configure a specific nodePort for secure HTTPS traffic on the shared LB service
-    secureNodePort: ~
+    secureNodePort: 443
     # @schema
     # type: [null, string]
     # @schema
@@ -828,7 +828,7 @@ ingressController:
   # Host Network related configuration
   hostNetwork:
     # -- Configure whether the Envoy listeners should be exposed on the host network.
-    enabled: false
+    enabled: true
     # -- Configure a specific port on the host network that gets used for the shared listener.
     sharedListenerPort: 8080
     # Specify the nodes where the Ingress listeners should be exposed
@@ -838,7 +838,9 @@ ingressController:
       # matchLabels:
       #   kubernetes.io/os: linux
       #   kubernetes.io/hostname: kind-worker
-      matchLabels: {}
+      matchLabels:
+        topology.kubernetes.io/zone=public
+
 gatewayAPI:
   # -- Enable support for Gateway API in cilium
   # This will automatically set enable-envoy-config as well.
@@ -2268,13 +2270,14 @@ envoy:
         # for the 'SYS_RESOURCE'.
         # In >= 5.8 there's already BPF and PERMON capabilities
         - SYS_ADMIN
+        - NET_BIND_SERVICE
         # Both PERFMON and BPF requires kernel 5.8, container runtime
         # cri-o >= v1.22.0 or containerd >= v1.5.0.
         # If available, SYS_ADMIN can be removed.
         #- PERFMON
         #- BPF
       # -- Keep capability `NET_BIND_SERVICE` for Envoy process.
-      keepCapNetBindService: false
+      keepCapNetBindService: true
   # -- Affinity for cilium-envoy.
   affinity:
     podAntiAffinity:
