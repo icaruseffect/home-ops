@@ -1,0 +1,31 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: contabo-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - ENC[AES256_GCM,data:aKOHrvjNfmxZCuKQuA==,iv:mi67pufIa4n/S8+9am1SyPa9X53Uwdco5EitCwPjhic=,tag:YoiFgbo+FVnhc9u6UO+pug==,type:str]
+    - ENC[AES256_GCM,data:W7qt8AAtRWBpYDob9XpLdWcJHHWm+YA5gA==,iv:uVqZZKeuLW1aKSU+0X0PME5qVebzaSWAjYTjxqrZEdI=,tag:vs3pMbbinP0osv+fVlU3Ag==,type:str]
+  autoAssign: true
+  avoidBuggyIPs: true
+sops:
+  kms: []
+  gcp_kms: []
+  azure_kv: []
+  hc_vault: []
+  age:
+    - recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+      enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBtcG1STzhHNzJwL0RBbEdG
+        ZEhCVVhqb2VpeU5ESUJCdm1Zd2hoRStHWkc4CkNzSFJtOE9mODZ4aEVLSHdERzFP
+        YllsS0NIR1BBSTVNallURDdZTEpUbXcKLS0tIE5wUWNabXRTdi9mMHBvdk80RmNC
+        dEkzd0tuYXBKNnlLek90YkozTGUrZGcKYJ/2zVKrJhij/56Ol5/NcGYb9QYgJeVt
+        Q1PsMry+o+f9q/i9uvwCD2/Fk56tbaPqBkJJXqt9RFYDqCSRf/qrdQ==
+        -----END AGE ENCRYPTED FILE-----
+  lastmodified: "2024-09-26T18:35:18Z"
+  mac: ENC[AES256_GCM,data:8ewu3Bw5vheQcpWeX3nPhyAgejrqMzob6vqPdbIHenbFtyZLek2o875INq/hZVc6Qage/A1Cc7ufZsC6BNVgNQH4YfnofIhcoPdCE71XjeUiisFBhVcSN4bMnXwG9oUC4ckltmCqxKC/tKC+67uMBXDZdaYWI9jLKFS4f0SSAJA=,iv:EnZc8NVgWTZsSRgDhMZqdEa2XoJiIGjULDE4FXD0jKk=,tag:ITRB3sLb7oTkP2U+qPDzxg==,type:str]
+  pgp: []
+  encrypted_regex: addresses
+  version: 3.9.0
