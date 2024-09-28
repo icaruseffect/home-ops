@@ -769,7 +769,7 @@ ingressController:
   # type: [null, string]
   # @schema
   # -- Default secret namespace for ingresses without .spec.tls[].secretName set.
-  defaultSecretNamespace:
+  defaultSecretNamespace: kube-system
   # @schema
   # type: [null, string]
   # @schema
@@ -809,7 +809,7 @@ ingressController:
     # type: [null, string]
     # @schema
     # -- Configure a specific loadBalancerClass on the shared LB service (requires Kubernetes 1.24+)
-    loadBalancerClass: ~
+    loadBalancerClass: io.cilium/node
     # @schema
     # type: [null, string]
     # @schema
@@ -828,7 +828,7 @@ ingressController:
   # Host Network related configuration
   hostNetwork:
     # -- Configure whether the Envoy listeners should be exposed on the host network.
-    enabled: true
+    enabled: false
     # -- Configure a specific port on the host network that gets used for the shared listener.
     sharedListenerPort: 8080
     # Specify the nodes where the Ingress listeners should be exposed
@@ -2026,7 +2026,7 @@ loadBalancer:
 # -- Configure N-S k8s service loadbalancing
 nodePort:
   # -- Enable the Cilium NodePort service implementation.
-  enabled: true
+  enabled: false
   # -- Port range to use for NodePort services.
   # range: "30000,32767"
 
