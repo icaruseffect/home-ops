@@ -381,7 +381,7 @@ highScaleIPcache:
 # -- Configure L2 announcements
 l2announcements:
   # -- Enable L2 announcements
-  enabled: false
+  enabled: true
   # -- If a lease is not renewed for X duration, the current leader is considered dead, a new leader is picked
   # leaseDuration: 15s
   # -- The interval at which the leader will renew the lease
@@ -809,7 +809,7 @@ ingressController:
     # type: [null, string]
     # @schema
     # -- Configure a specific loadBalancerClass on the shared LB service (requires Kubernetes 1.24+)
-    loadBalancerClass: io.cilium/node
+    loadBalancerClass: ~
     # @schema
     # type: [null, string]
     # @schema
@@ -1848,7 +1848,7 @@ ipv4:
   enabled: true
 ipv6:
   # -- Enable IPv6 support.
-  enabled: false
+  enabled: true
 # -- Configure Kubernetes specific configuration
 k8s:
   # -- requireIPv4PodCIDR enables waiting for Kubernetes to provide the PodCIDR
