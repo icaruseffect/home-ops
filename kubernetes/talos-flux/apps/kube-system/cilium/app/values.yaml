@@ -757,10 +757,10 @@ ingressController:
   # Supported values: shared, dedicated
   # For granular control, use the following annotations on the ingress resource:
   # "ingress.cilium.io/loadbalancer-mode: dedicated" (or "shared").
-  loadbalancerMode: dedicated
+  loadbalancerMode: shared
   # -- Enforce https for host having matching TLS host in Ingress.
   # Incoming traffic to http listener will return 308 http error code with respective location in header.
-  enforceHttps: true
+  enforceHttps: false
   # -- Enable proxy protocol for all Ingress listeners. Note that _only_ Proxy protocol traffic will be accepted once this is enabled.
   enableProxyProtocol: false
   # -- IngressLBAnnotations are the annotation and label prefixes, which are used to filter annotations and/or labels to propagate from Ingress to the Load Balancer service
@@ -839,7 +839,7 @@ ingressController:
       #   kubernetes.io/os: linux
       #   kubernetes.io/hostname: kind-worker
       matchLabels:
-        topology.kubernetes.io/zone: public
+        # topology.kubernetes.io/zone: public
 
 gatewayAPI:
   # -- Enable support for Gateway API in cilium
