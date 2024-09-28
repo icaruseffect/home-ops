@@ -1001,7 +1001,7 @@ hostPort:
 # -- Configure socket LB
 socketLB:
   # -- Enable socket LB
-  enabled: false
+  enabled: true
   # -- Disable socket lb for non-root ns. This is used to enable Istio routing rules.
   # hostNamespaceOnly: false
   # -- Enable terminating pod connections to deleted service backends.
