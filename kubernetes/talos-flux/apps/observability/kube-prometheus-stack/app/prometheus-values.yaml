@@ -51,7 +51,7 @@ prometheus:
     externalLabels:
       cluster: ${SETTING_CLUSTERNAME}
 
-    replicas: 3
+    replicas: 1
     replicaExternalLabelName: __replica__
     ruleSelectorNilUsesHelmValues: false
     serviceMonitorSelectorNilUsesHelmValues: false
