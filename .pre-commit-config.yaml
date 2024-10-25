@@ -5,6 +5,7 @@ fail_fast: false
 default_stages:
   - commit
   - push
+exclude: "archive/.*"
 
 repos:
   - repo: https://github.com/thlorenz/doctoc
@@ -18,20 +19,20 @@ repos:
           - --github
           - --notitle
 
-  - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.96.1
-    hooks:
-      - id: terraform_docs
-        args:
-          - --hook-config=--path-to-file=README.md
-          - --args=--config=.terraform-docs.yaml
-      - id: terraform_fmt
-      - id: terraform_tflint
-        args:
-          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
-      - id: terraform_trivy
-      #   args:
-      #     - --args=--config-file=__GIT_WORKING_DIR__/.tfsec.yaml
+  # - repo: https://github.com/antonbabenko/pre-commit-terraform
+  # rev: v1.96.1
+  # hooks:
+  # - id: terraform_docs
+  # args:
+  # - --hook-config=--path-to-file=README.md
+  # - --args=--config=.terraform-docs.yaml
+  # - id: terraform_fmt
+  # - id: terraform_tflint
+  # args:
+  # - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+  # - id: terraform_trivy
+  # args:
+  # - --args=--config-file=__GIT_WORKING_DIR__/.tfsec.yaml
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -41,7 +42,6 @@ repos:
         exclude: "gotk-components.yaml"
         args:
           - --maxkb=200
-
       - id: check-case-conflict
       - id: check-executables-have-shebangs
       - id: check-json
@@ -124,5 +124,6 @@ repos:
             devenv/.*|
             kubernetes/talos-flux/apps/home-automation/esphome/app/config/.+.yaml|
             kubernetes/talos-flux/apps/home-automation/home-assistant/app/patches/db-init.yaml|
-            kubernetes/talos-flux/apps/github/actions-runner-controller/.+/helm-release.yaml
+            kubernetes/talos-flux/apps/github/actions-runner-controller/.+/helm-release.yaml|
+            kubernetes/kube-nas/.*
           )$()
