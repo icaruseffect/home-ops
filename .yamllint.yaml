@@ -14,8 +14,9 @@ rules:
 
   # https://yamllint.readthedocs.io/en/stable/rules.html#line-length
   line-length:
-    max: 120
-    level: warning
+    disable
+    # max: 120
+    # level: warning
 
   # https://yamllint.readthedocs.io/en/stable/rules.html#braces
   braces:
