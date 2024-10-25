@@ -8,7 +8,6 @@ Thumbs.db
 # vscode-sops
 .decrypted~*.yaml
 *.agekey
-.env
 
 # Local .terraform directories
 **/.terraform/*
@@ -51,9 +50,14 @@ megalinter-reports/
 
 # talos configs
 infra/talos/clusterconfig/*.yaml
-infra/talos/clusterconfig/talosconfig
+**/talosconfig
+**/machineconfig*.yaml
 
 # bootstrap helm charts
 kubernetes/**/bootstrap/**/charts
 talosconfig
 .task
+
+# ignore environment files
+.env*
+.envrc
