@@ -27,9 +27,11 @@ spec:
       rbac:
         create: true
       localpv:
+        basePath: /var/local/openebs
         image:
           registry: quay.io/
           repository: openebs/provisioner-localpv
+          tag: 4.1.0
       hostpathClass:
         name: openebs-hostpath
     openebs-crds:
