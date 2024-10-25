@@ -56,3 +56,4 @@ infra/talos/clusterconfig/talosconfig
 # bootstrap helm charts
 kubernetes/**/bootstrap/**/charts
 talosconfig
+.task
