@@ -747,7 +747,7 @@ envoyConfig:
 ingressController:
   # -- Enable cilium ingress controller
   # This will automatically set enable-envoy-config as well.
-  enabled: false
+  enabled: true
   # -- Set cilium ingress controller to be the default ingress controller
   # This will let cilium ingress controller route entries without ingress class set
   default: true
@@ -1151,12 +1151,12 @@ hubble:
     # grafana can import dashboards based on the label and value
     # ref: https://github.com/grafana/helm-charts/tree/main/charts/grafana#sidecar-for-dashboards
     dashboards:
-      enabled: false
+      enabled: true
       label: grafana_dashboard
       # @schema
       # type: [null, string]
       # @schema
-      namespace: ~
+      namespace: observability
       labelValue: "1"
       annotations: {}
   # -- Unix domain socket path to listen to when Hubble is enabled.
