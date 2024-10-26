@@ -37,8 +37,8 @@ spec:
       GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "true"
       DS_PROMETHEUS: prometheus
 
-    envFromSecrets:
-      - name: grafana-env
+    # envFromSecrets:
+    # - name: grafana-env
 
     admin:
       existingSecret: grafana-admin
@@ -46,17 +46,10 @@ spec:
       passwordKey: PASSWORD
 
     grafana.ini:
-      server:
-        root_url: https://grafana.techtales.io
+      # server:
+      # root_url: https://grafana.techtales.io
       users:
         auto_assign_org_role: Admin
-      auth.google:
-        enabled: true
-        allow_sign_up: true
-        allowed_domains: techtales.io
-        scopes: https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email
-        auth_url: https://accounts.google.com/o/oauth2/auth
-        token_url: https://accounts.google.com/o/oauth2/token
 
     dashboards:
       default:
@@ -91,28 +84,28 @@ spec:
     serviceMonitor:
       enabled: true
 
-    ingress:
-      enabled: true
-      ingressClassName: traefik
-      annotations:
-        cert-manager.io/cluster-issuer: letsencrypt-production
-        traefik.ingress.kubernetes.io/router.entrypoints: websecure
-        external-dns/cloudflare: "true"
-        hajimari.io/enable: "true"
-        hajimari.io/icon: simple-icons:grafana
-        gethomepage.dev/enabled: "true"
-        gethomepage.dev/description: Metrics, logs, traces, and profiles, oh my!
-        gethomepage.dev/group: Observability
-        gethomepage.dev/icon: grafana
-        gethomepage.dev/name: Grafana Dashboard
-        gethomepage.dev/weight: "10" # optional
-      hosts:
-        - &host grafana.techtales.io
-      path: /
-      tls:
-        - secretName: grafana-tls
-          hosts:
-            - *host
+    # ingress:
+    # enabled: true
+    # ingressClassName: traefik
+    # annotations:
+    # cert-manager.io/cluster-issuer: letsencrypt-production
+    # traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # external-dns/cloudflare: "true"
+    # hajimari.io/enable: "true"
+    # hajimari.io/icon: simple-icons:grafana
+    # gethomepage.dev/enabled: "true"
+    # gethomepage.dev/description: Metrics, logs, traces, and profiles, oh my!
+    # gethomepage.dev/group: Observability
+    # gethomepage.dev/icon: grafana
+    # gethomepage.dev/name: Grafana Dashboard
+    # gethomepage.dev/weight: "10" # optional
+    # hosts:
+    # - &host grafana.techtales.io
+    # path: /
+    # tls:
+    # - secretName: grafana-tls
+    # hosts:
+    # - *host
 
     serviceAccount:
       create: true
