@@ -6,6 +6,8 @@ tasks:
   setup:
     - task: config
     - task: kubeconfig
+    - task: patch
+    - task: apply-config
 
   init:
     desc: Initialize talos configuration
@@ -21,41 +23,51 @@ tasks:
     cmds:
       - "talhelper genconfig"
 
-  install:talos01:
-    desc: Install talos01
-    dir: infra/talos
+  patch:copy-mc:
+    dir: infra/talos/contabo
     cmds:
-      - |
-        talosctl apply-config --insecure \
-          --nodes 192.168.1.51 \
-          --file clusterconfig/talos-flux-talos01.yaml
+      - cmd: cp controlplane.yaml machineconfig_patched.yaml
 
-  install:talos02:
-    desc: Install talos02
-    dir: infra/talos
+  patch:
+    desc: Patch the machineconfig file
+    dir: infra/talos/contabo
+    deps: [patch:copy-mc]
+    sources:
+      - patches/*.yaml
+    # generates:
+    # - contabo/machineconfig_patched.yaml
+    run: always
     cmds:
-      - |
-        talosctl apply-config --insecure \
-          --nodes 192.168.1.52 \
-          --file clusterconfig/talos-flux-talos02.yaml
+      - cmd: echo $PWD
+      # - cmd: cp controlplane.yaml machineconfig_patched.yaml
+      - cmd: ls -la
+      - for: sources
+        cmd: talosctl mc patch machineconfig_patched.yaml --patch @{{.ITEM}} > /tmp/machineconfig_tmp && cp /tmp/machineconfig_tmp machineconfig_patched.yaml
+      - cmd: rm /tmp/machineconfig_tmp
+    preconditions:
+      # if template and patched file are the same after copying the template run the patches
+      - sh: "[[ $(sha256sum machineconfig_patched.yaml | awk '{ print $1 }') = $(sha256sum controlplane.yaml | awk '{ print $1 }' ) ]]"
+    requires:
+      vars:
+        - TALOSCONFIG
 
-  install:talos03:
-    desc: Install talos03
-    dir: infra/talos
+  bootstrap:apply-config-insecure:
+    desc: Install contabo
+    dir: infra/talos/contabo
     cmds:
       - |
         talosctl apply-config --insecure \
-          --nodes 192.168.1.53 \
-          --file clusterconfig/talos-flux-talos03.yaml
+          --file machineconfig_patched.yaml \
+          --nodes $NODE_IP
 
-  install:talos04:
-    desc: Install talos04
-    dir: infra/talos
+  bootstrap:apply-config-secure:
+    desc: Install contabo
+    dir: infra/talos/contabo
     cmds:
       - |
-        talosctl apply-config --insecure \
-          --nodes 192.168.1.54 \
-          --file clusterconfig/talos-flux-talos04.yaml
+        talosctl apply-config  \
+          --file machineconfig_patched.yaml \
+          --nodes $NODE_IP
 
   update:talos01:
     desc: Update talos01
@@ -66,41 +78,14 @@ tasks:
           --nodes 192.168.1.51 \
           --file clusterconfig/talos-flux-talos01.yaml
 
-  update:talos02:
-    desc: Update talos02
-    dir: infra/talos
-    cmds:
-      - |
-        talosctl apply-config \
-          --nodes 192.168.1.52 \
-          --file clusterconfig/talos-flux-talos02.yaml
-
-  update:talos03:
-    desc: Update talos03
-    dir: infra/talos
-    cmds:
-      - |
-        talosctl apply-config \
-          --nodes 192.168.1.53 \
-          --file clusterconfig/talos-flux-talos03.yaml
-
-  update:talos04:
-    desc: Update talos04
-    dir: infra/talos
-    cmds:
-      - |
-        talosctl apply-config \
-          --nodes 192.168.1.54 \
-          --file clusterconfig/talos-flux-talos04.yaml
-
-  bootstrap:
-    desc: Bootstrap talos etcd on 1st node
+  bootstrap:etcd:
+    desc: Bootstrap talos etcd on contabo
     dir: infra/talos
     cmds:
       - |
         talosctl bootstrap \
           --talosconfig=clusterconfig/talosconfig \
-          --nodes 192.168.1.51
+          --nodes $NODE_IP
 
   kubeconfig:
     desc: write kube config
@@ -108,10 +93,30 @@ tasks:
     cmds:
       - |
         talosctl kubeconfig \
-          --talosconfig=clusterconfig/talosconfig \
-          --nodes 192.168.1.50 \
-          --endpoints 192.168.1.50 \
+          --talosconfig=$TALOSCONFIG \
           --force
+
+  bootstrap:network:
+    dir: kubernetes/talos-flux/
+    cmds:
+      - kubectl kustomize --enable-helm  --helm-command=$(which helm) bootstrap/cilium | kubectl apply -n kube-system -f -
+
+  bootstrap:flux:
+    dir: kubernetes/talos-flux/
+    cmds:
+      - kubectl apply --server-side -k flux/flux-manifests
+      - sops decrypt flux/config/sops-age.sops.yaml | kubectl apply -n flux-system -f -
+      - sops decrypt flux/config/cluster-secrets.sops.yaml | kubectl apply -n flux-system -f -
+      - sops decrypt flux/config/github-ssh.sops.yaml | kubectl apply -n flux-system -f -
+      - kubectl apply --server-side -f flux/repositories/home-ops.yaml
+      - kubectl apply --server-side -f flux/flux-sync.yaml
+      - kubectl apply --server-side -f flux/apps-sync.yaml
+
+  cilium:delete-unmanaged-pods:
+    cmd: kubectl get pods --all-namespaces -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,HOSTNETWORK:.spec.hostNetwork --no-headers=true | grep '<none>' | awk '{print "-n "$1" "$2"}' | xargs -L 1 -r kubectl delete pod
+
+  cilium:rollOutRestart:
+    cmd: kubectl -n kube-system rollout restart deployment/cilium-operator daemonset/cilium daemonset/cilium-envoy
 
   # dashboard:
   #   desc: start the theila dashboard
@@ -140,30 +145,9 @@ tasks:
       - |
         talosctl dashboard \
           --nodes 192.168.1.51
-
-  dashboard:talos02:
-    desc: Dashboard talos02
-    dir: infra/talos
-    cmds:
-      - |
-        talosctl dashboard \
-          --nodes 192.168.1.52
-
-  dashboard:talos03:
-    desc: Dashboard talos03
-    dir: infra/talos
-    cmds:
-      - |
-        talosctl dashboard \
-          --nodes 192.168.1.53
-
-  dashboard:talos04:
-    desc: Dashboard talos04
-    dir: infra/talos
-    cmds:
-      - |
-        talosctl dashboard \
-          --nodes 192.168.1.54
+  reset:
+    desc: Reset the machine and delete STATE and EPHEMERAL partition
+    cmd: talosctl reset  --graceful=false  --system-labels-to-wipe STATE --system-labels-to-wipe EPHEMERAL --reboot
 
   upgrade:
     # usage: task talos:upgrade hostname=192.168.1.51 cluster=talos-flux
