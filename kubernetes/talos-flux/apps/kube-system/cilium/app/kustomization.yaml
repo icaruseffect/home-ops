@@ -7,7 +7,10 @@ resources:
   - helm-release.yaml
 configMapGenerator:
   - name: cilium-helm-values
+    namespace: kube-system
     files:
       - values.yaml=./values.yaml
 configurations:
   - kustomizeconfig.yaml
+generatorOptions:
+  disableNameSuffixHash: true
