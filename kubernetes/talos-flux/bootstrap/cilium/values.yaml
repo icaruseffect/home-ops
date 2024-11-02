@@ -795,7 +795,8 @@ ingressController:
     # -- Service name
     name: cilium-ingress
     # -- Labels to be added for the shared LB service
-    labels: {}
+    labels:
+      io.cilium/lb-ipam-ips: l2-pool
     # -- Annotations to be added for the shared LB service
     annotations: {}
     # -- Service type for the shared LB service
@@ -835,15 +836,15 @@ ingressController:
     # -- Configure whether the Envoy listeners should be exposed on the host network.
     enabled: false
     # -- Configure a specific port on the host network that gets used for the shared listener.
-    sharedListenerPort: 8080
+    sharedListenerPort: 80
     # Specify the nodes where the Ingress listeners should be exposed
     nodes:
       # -- Specify the labels of the nodes where the Ingress listeners should be exposed
       #
-      # matchLabels:
-      #   kubernetes.io/os: linux
+      matchLabels:
+        kubernetes.io/os: linux
       #   kubernetes.io/hostname: kind-worker
-      matchLabels: {}
+      # matchLabels: {}
 gatewayAPI:
   # -- Enable support for Gateway API in cilium
   # This will automatically set enable-envoy-config as well.
@@ -1153,7 +1154,7 @@ hubble:
       # type: [null, string]
       # @schema
       # namespace: observability
-      labelValue: "1"
+      # labelValue: "1"
       annotations: {}
   # -- Unix domain socket path to listen to when Hubble is enabled.
   socketPath: /var/run/cilium/hubble.sock
@@ -1309,7 +1310,7 @@ hubble:
       extraIpAddresses: []
   relay:
     # -- Enable Hubble Relay (requires hubble.enabled=true)
-    enabled: false
+    enabled: true
     # -- Roll out Hubble Relay pods automatically when configmap is updated.
     rollOutPods: false
     # -- Hubble-relay container image.
@@ -1524,7 +1525,7 @@ hubble:
       port: 6062
   ui:
     # -- Whether to enable the Hubble UI.
-    enabled: false
+    enabled: true
     standalone:
       # -- When true, it will allow installing the Hubble UI only, without checking dependencies.
       # It is useful if a cluster already has cilium and Hubble relay installed and you just
@@ -1548,7 +1549,7 @@ hubble:
         #         - key: ca.crt
         #           path: hubble-relay-ca.crt
     # -- Roll out Hubble-ui pods automatically when configmap is updated.
-    rollOutPods: false
+    rollOutPods: true
     tls:
       client:
         # -- Name of the Secret containing the client certificate and key for Hubble UI

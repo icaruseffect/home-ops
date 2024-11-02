@@ -747,7 +747,7 @@ envoyConfig:
 ingressController:
   # -- Enable cilium ingress controller
   # This will automatically set enable-envoy-config as well.
-  enabled: false
+  enabled: true
   # -- Set cilium ingress controller to be the default ingress controller
   # This will let cilium ingress controller route entries without ingress class set
   default: true
@@ -796,7 +796,7 @@ ingressController:
     name: cilium-ingress
     # -- Labels to be added for the shared LB service
     labels:
-      - io.cilium/lb-ipam-ips: l2-pool
+      io.cilium/lb-ipam-ips: l2-pool
     # -- Annotations to be added for the shared LB service
     annotations: {}
     # -- Service type for the shared LB service
@@ -1153,8 +1153,8 @@ hubble:
       # @schema
       # type: [null, string]
       # @schema
-      namespace: observability
-      labelValue: "1"
+      # namespace: observability
+      # labelValue: "1"
       annotations: {}
   # -- Unix domain socket path to listen to when Hubble is enabled.
   socketPath: /var/run/cilium/hubble.sock
