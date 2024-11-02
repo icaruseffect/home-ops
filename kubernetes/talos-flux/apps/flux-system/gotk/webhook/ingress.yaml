@@ -13,9 +13,8 @@ metadata:
     external-dns/cloudflare: "true"
     hajimari.io/enable: "false"
 spec:
-  ingressClassName: traefik
   rules:
-    - host: &host flux-webhook.techtales.io
+    - host: "flux-webhook.${SECRET_DOMAIN}"
       http:
         paths:
           - path: /
@@ -26,6 +25,4 @@ spec:
                 port:
                   number: 80
   tls:
-    - secretName: webhook-receiver-tls
-      hosts:
-        - *host
+    - secretName: ${SECRET_TLS_WC}
