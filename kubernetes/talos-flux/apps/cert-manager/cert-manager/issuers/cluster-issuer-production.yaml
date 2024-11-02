@@ -12,5 +12,6 @@ spec:
       name: letsencrypt-production
     solvers:
       - http01:
-        ingressClassName: cilium
+          ingress:
+            ingressClassName: cilium
         selector: {}

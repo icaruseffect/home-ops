@@ -11,5 +11,6 @@ spec:
       name: letsencrypt-staging
     solvers:
       - http01:
-        ingressClassName: cilium
+        ingress:
+          ingressClassName: cilium
         selector: {}
