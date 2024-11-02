@@ -10,9 +10,7 @@ spec:
     # preferredChain: ISRG Root X1
     privateKeySecretRef:
       name: letsencrypt-production
-    # solvers:
-    #   - http01:
-    #     # TODO
-    #     selector:
-    #       dnsZones:
-    #         - "$(SECRET_DOMAIN)"
+    solvers:
+      - http01:
+        ingressClassName: cilium
+        selector: {}
