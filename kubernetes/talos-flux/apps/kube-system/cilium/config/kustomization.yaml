@@ -6,4 +6,4 @@ resources:
   - ./cilium-host-policy.yaml
   - ./cilium-host-ingress-policy.yaml
   - ./cilium-l2-announcement-policy.yaml
-  - ./cilium-load-balancer-ip-pool.yaml
+  - ./cilium-load-balancer-ip-pool.sops.yaml
