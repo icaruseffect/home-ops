@@ -1,0 +1,28 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: stalwart-mail
+  namespace: mail
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: stalwart-mail
+      version: 6.6.9
+      sourceRef:
+        kind: OCIRepository
+        name: stalwart-mail-charts
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  valuesFrom:
+    - kind: ConfigMap
+      name: values-stalwart-mail
