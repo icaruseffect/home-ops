@@ -3,8 +3,8 @@
 fail_fast: false
 
 default_stages:
-  - commit
-  - push
+  - pre-commit
+  - pre-push
 exclude: "archive/.*"
 
 repos:
@@ -104,7 +104,7 @@ repos:
     hooks:
       - id: forbid-secrets
         stages:
-          - push
+          - pre-push
         exclude: |
           (?x)^(
             kubernetes/talos-flux/apps/secops/vault-auth.yaml|
