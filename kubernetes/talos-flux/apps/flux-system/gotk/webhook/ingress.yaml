@@ -4,6 +4,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: webhook-receiver
+  namespace: flux-system
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-production
     kubernetes.io/tls-acme: "true"
@@ -12,9 +13,11 @@ metadata:
     traefik.ingress.kubernetes.io/router.tls: "true"
     external-dns/cloudflare: "true"
     hajimari.io/enable: "false"
+    kustomize.toolkit.fluxcd.io/substitute: enabled
+
 spec:
   rules:
-    - host: "flux-webhook.${SECRET_DOMAIN}"
+    - host: flux-webhook.${SECRET_DOMAIN}
       http:
         paths:
           - path: /
@@ -26,3 +29,5 @@ spec:
                   number: 80
   tls:
     - secretName: ${SECRET_TLS_WC}
+      hosts:
+        - "*.${SECRET_DOMAIN}"
