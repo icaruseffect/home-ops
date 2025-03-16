@@ -546,7 +546,7 @@ service:
   nodePort:
   # -- use additional annotation on service for nextcloud
   annotations: {}
-  ipFamilyPolicy: RequireDualStack
+  ipFamilyPolicy: PreferDualStack
 
 ## Enable persistence using Persistent Volume Claims
 ## ref: http://kubernetes.io/docs/user-guide/persistent-volumes/
