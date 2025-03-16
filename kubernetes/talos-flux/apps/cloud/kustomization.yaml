@@ -5,3 +5,4 @@ kind: Kustomization
 resources:
   - ./namespace.yaml
   - ./nextcloud/flux-sync.yaml
+  - ./nextcloud/database-nextcloud.yaml

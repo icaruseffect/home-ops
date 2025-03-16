@@ -9,8 +9,8 @@ configMapGenerator:
   - name: nextcloud-helm-values
     namespace: cloud
     files:
-      - nextcloud-helm-values.yaml
+      - nextcloud-helm-values.yaml=./values.yaml
 configurations:
   - kustomizeconfig.yaml
 generatorOptions:
-  disableNameSuffixHash: false
+  disableNameSuffixHash: true
