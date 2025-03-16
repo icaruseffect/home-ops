@@ -9,7 +9,7 @@ configMapGenerator:
   - name: nextcloud-helm-values
     namespace: cloud
     files:
-      - nextcloud-helm-values.yaml=./values.yaml
+      - nextcloud-helm-values.yaml
 configurations:
   - kustomizeconfig.yaml
 generatorOptions:
