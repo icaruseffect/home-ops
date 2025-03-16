@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/cilium.io/ciliumloadbalancerippool_v2alpha1.json
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+    name: l2-pool
+spec:
+    allowFirstLastIPs: "Yes"
+    blocks:
+        - cidr: ENC[AES256_GCM,data:oTQc6O2OZlDZqHWQvQ==,iv:1l7GBwzN/b7WYbDYMnn2x4xYWWe4tdLpdpwTxuDB/Mg=,tag:KzDstqh3UwpiOm2Rpu+Vkg==,type:str]
+        - cidr: ENC[AES256_GCM,data:Y54ZY5Dt8NNKsL9sM73OMXXGaLwf2VnQIQ==,iv:jC3GqoeXiuY9fIeR+jleNf593R/X0whfYIsryp4xWdM=,tag:YQY/Xei3jishJDdhBb0aXQ==,type:str]
+sops:
+    kms: []
+    gcp_kms: []
+    azure_kv: []
+    hc_vault: []
+    age:
+        - recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxZkNFdUNteEl1TmJaTUdh
+            VmptUU12NC9RV21HUjBaL05aTi9FZUtudFE0CktoL09DaDg4VGxrenFFekEvYkVq
+            M0doV0RwWURxZnJRZFdoOHJ0blB2VXcKLS0tIDhqOG81VEh2TXQ1dzU4R2NCQzFh
+            ck9rTUsrS1dkUlVSeGtIUWdmZzErckkKH5e89L7wjrmtrq+I8p8SmAMwXxtravVu
+            dShuOhKWcVPsSEBGAwYILjFoF85n/WLYx6fZ4I3FdxQ+Y6ZTr8q5+A==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2025-03-15T23:06:12Z"
+    mac: ENC[AES256_GCM,data:T1mkcxtZ6qR9rh6WMYdonu2p956qkcAscbc3dd7ECCwH83CCOgSZuB7y6vVzRTTo53Kpu404yydN66PhkEMVciXwluCIrG5PS+0Xn1FSmyEHAEj28ShV963dRAxB/p+bDUsXpZ2Q0/p5+fTzgOnD/mR86YIF44MjsqLUWw2eGdE=,iv:aw9til+WkXBylnFk18ytQjtq4VovDzFFbgVd8PYDHW8=,tag:QGP2zSga0lo5B0zAbUX+Yw==,type:str]
+    pgp: []
+    encrypted_regex: blocks
+    version: 3.9.4
