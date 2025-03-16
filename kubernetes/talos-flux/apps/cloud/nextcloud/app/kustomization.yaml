@@ -1,0 +1,16 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloud
+resources:
+  - helm-release.yaml
+configMapGenerator:
+  - name: nextcloud-helm-values
+    namespace: cloud
+    files:
+      - nextcloud-helm-values.yaml
+configurations:
+  - kustomizeconfig.yaml
+generatorOptions:
+  disableNameSuffixHash: false

@@ -1,0 +1,18 @@
+---
+apiVersion: dbman.hef.sh/v1alpha3
+kind: Database
+metadata:
+  name: nextcloud
+  namespace: cloud
+spec:
+  databaseServerRef:
+    namespace: database
+    name: postgres15
+  databaseName: nextcloud
+  credentials:
+    usernameSecretRef:
+      name: psql-nextcloud
+      key: db-username
+    passwordSecretRef:
+      name: psql-nextcloud
+      key: db-password
