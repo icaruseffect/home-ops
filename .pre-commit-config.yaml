@@ -103,6 +103,8 @@ repos:
     rev: v2.1.1
     hooks:
       - id: forbid-secrets
+        stages:
+          - push
         exclude: |
           (?x)^(
             kubernetes/talos-flux/apps/secops/vault-auth.yaml|
