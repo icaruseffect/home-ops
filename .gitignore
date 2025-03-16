@@ -61,3 +61,6 @@ talosconfig
 # ignore environment files
 .env*
 .envrc
+
+# ignore node files
+node_modules/*
