@@ -3,14 +3,17 @@ apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: letsencrypt-staging
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: enabled
+
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: "${SECRET_EMAIL}"
+    email: ${SECRET_EMAIL}
     privateKeySecretRef:
       name: letsencrypt-staging
     solvers:
       - http01:
-        ingress:
-          ingressClassName: cilium
+          ingress:
+            ingressClassName: cilium
         selector: {}
