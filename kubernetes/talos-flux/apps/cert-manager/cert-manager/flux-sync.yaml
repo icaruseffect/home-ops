@@ -33,3 +33,20 @@ spec:
   wait: true
   dependsOn:
     - name: apps-cert-manager
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/kustomize.toolkit.fluxcd.io/kustomization_v1.json
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-cert-manager-certificates
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./kubernetes/talos-flux/apps/cert-manager/cert-manager/certificates
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: home-ops
+  wait: true
+  dependsOn:
+    - name: apps-cert-manager
