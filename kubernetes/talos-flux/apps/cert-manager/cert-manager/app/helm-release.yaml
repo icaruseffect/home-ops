@@ -27,15 +27,15 @@ spec:
     # https://artifacthub.io/packages/helm/cert-manager/cert-manager?modal=values
     installCRDs: true
     extraArgs:
-      - --dns01-recursive-nameservers=1.1.1.1:53,9.9.9.9:53
+      - --dns01-recursive-nameservers=192.174.68.104:53,45.87.158.53:53
       - --dns01-recursive-nameservers-only
       - --enable-certificate-owner-ref
     replicaCount: 1
     podDnsPolicy: "None"
     podDnsConfig:
       nameservers:
-        - "1.1.1.1"
-        - "9.9.9.9"
+        - "192.174.68.104"
+        - "45.87.158.53"
     resources:
       requests:
         cpu: 10m
