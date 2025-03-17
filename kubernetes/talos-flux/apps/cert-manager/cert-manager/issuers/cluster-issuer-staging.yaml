@@ -16,4 +16,10 @@ spec:
       - http01:
           ingress:
             ingressClassName: cilium
-        selector: {}
+            ingressTemplate:
+              metadata:
+                annotations:
+                  io.cilium/lb-ipam-ip-family: ipv4
+        selector:
+          dnsZones:
+            - "${SECRET_DOMAIN}"
