@@ -703,7 +703,7 @@ metrics:
       prometheus.io/scrape: "true"
       prometheus.io/port: "9205"
     labels: {}
-    ipFamilyPolicy: RequireDualStack
+    ipFamilyPolicy: PreferDualStack
 
   # -- security context for the metrics CONTAINER in the pod
   securityContext:
