@@ -14,7 +14,19 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-production
     solvers:
-      - http01:
-          ingress:
-            ingressClassName: cilium
-        selector: {}
+      - dns01:
+          webhook:
+            groupName: cert-manager-webhook-inwx.smueller18.gitlab.com
+            solverName: inwx
+            config:
+              ttl: 300 # default 300
+              sandbox: false # default false
+              usernameSecretKeyRef:
+                name: inwx-credentials
+                key: username
+              passwordSecretKeyRef:
+                name: inwx-credentials
+                key: password
+              otpKeySecretKeyRef:
+                name: inwx-credentials
+                key: otpKey
