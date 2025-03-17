@@ -3,9 +3,10 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: wc-tls
-  namespace: default
+  namespace: cert-manager
   annotations:
     kustomize.toolkit.fluxcd.io/substitute: enabled
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
 
 spec:
   dnsNames:
