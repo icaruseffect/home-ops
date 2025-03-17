@@ -19,8 +19,8 @@ spec:
             groupName: cert-manager-webhook-inwx.smueller18.gitlab.com
             solverName: inwx
             config:
-              ttl: 300 # default 300
-              sandbox: false # default false
+              ttl: 300
+              sandbox: false
               usernameSecretKeyRef:
                 name: inwx-credentials
                 key: username
@@ -30,6 +30,6 @@ spec:
               otpKeySecretKeyRef:
                 name: inwx-credentials
                 key: otpKey
-          selector:
-            dnsZones:
-              - "${SECRET_DOMAIN}"
+        selector:
+          dnsZones:
+            - "${SECRET_DOMAIN}"
