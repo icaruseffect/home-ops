@@ -14,22 +14,14 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-production
     solvers:
-      - dns01:
-          webhook:
-            groupName: cert-manager-webhook-inwx.smueller18.gitlab.com
-            solverName: inwx
-            config:
-              ttl: 300
-              sandbox: false
-              usernameSecretKeyRef:
-                name: inwx-credentials
-                key: username
-              passwordSecretKeyRef:
-                name: inwx-credentials
-                key: password
-              otpKeySecretKeyRef:
-                name: inwx-credentials
-                key: otpKey
+      - http01:
+          ingress:
+            ingressClassName: cilium
+            ingressTemplate:
+              metadata:
+                annotations:
+                  io.cilium/lb-ipam-ip-family: ipv4
+                  ingress.cilium.io/force-https: disabled
         selector:
           dnsZones:
             - "${SECRET_DOMAIN}"

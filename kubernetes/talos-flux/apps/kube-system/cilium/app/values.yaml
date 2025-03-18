@@ -39,6 +39,9 @@ ingressController:
   # For granular control, use the following annotations on the ingress resource:
   # "ingress.cilium.io/loadbalancer-mode: dedicated" (or "shared").
   loadbalancerMode: shared
+  defaultSecretName: wc-tls
+  defaultSecretNamespace: cert-manager
+  enforceHttps: false
   service:
     labels:
       homelab/public-service: "true"
