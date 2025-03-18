@@ -4,7 +4,7 @@ kind: DatabaseServer
 metadata:
   name: postgres16
 spec:
-  connString: "host=postgres16-rw.database.svc.cluster.local"
+  connString: "host=postgres16-rw.database.svc.cluster.local dbname=postgres"
   credentials:
     basicAuthSecretRef: postgres-superuser
 ---

@@ -1,0 +1,51 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dbman-operator
+  labels:
+    app: dbman
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services", "pods", "pods/exec"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["dbman.hef.sh"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dbman-sa
+  namespace: database
+  labels:
+    app: dbman
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dbman-operator
+  labels:
+    app: dbman
+subjects:
+  - kind: ServiceAccount
+    name: dbman-sa
+    namespace: database
+roleRef:
+  kind: ClusterRole
+  name: dbman-operator
+  apiGroup: rbac.authorization.k8s.io

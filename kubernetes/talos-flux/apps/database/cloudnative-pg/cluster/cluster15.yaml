@@ -4,13 +4,30 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: postgres15
+  namespace: database
 spec:
-  instances: 3
+  instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:15.3
   primaryUpdateStrategy: unsupervised
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+      secret:
+        name: postgres-superuser
   storage:
     size: 30Gi
+    storageClass: openebs-hostpath
   superuserSecret:
     name: postgres-superuser
   monitoring:
     enablePodMonitor: true
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres15-1
+  namespace: database
+spec:
+  storageClassName: openebs-hostpath
