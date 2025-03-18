@@ -28,9 +28,10 @@ ingress:
   enabled: true
   # className: nginx
   annotations:
+    {}
     #  nginx.ingress.kubernetes.io/proxy-body-size: 4G
     #  kubernetes.io/tls-acme: "true"
-    cert-manager.io/cluster-issuer: letsencrypt-production
+    # cert-manager.io/cluster-issuer: letsencrypt-production
   #  # Keep this in sync with the README.md:
   # nginx.ingress.kubernetes.io/server-snippet: |-
   # server_tokens off;
@@ -95,6 +96,10 @@ nextcloud:
   datadir: /var/www/html/data
   persistence:
     subPath:
+    annotations:
+      backup.velero.io/backup-volumes: nextcloud-data # Add backup annotations
+    storageClass: "openebs-hostpath" # Consider using a storage class with snapshot support
+
   # if set, we'll template this list to the NEXTCLOUD_TRUSTED_DOMAINS env var
   trustedDomains: ["cloud.${SECRET_DOMAIN}", "${SECRET_DOMAIN}"]
   ## SMTP configuration
@@ -265,16 +270,15 @@ nextcloud:
 
   # Extra init containers that runs before pods start.
   extraInitContainers:
-    []
-    # - name: init-permissions
-    # image: alpine:latest
-    # command: ["/bin/sh", "-c"]
-    # args:
-    # - mkdir -p /usr/local/etc/php/conf.d/
-    # - chown -R 0:33 /usr/local/etc/php/conf.d/
-    # - chown -R 33:33 /var/www/html
-    # securityContext:
-    # runAsUser: 0
+    - name: init-permissions
+      image: alpine:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - mkdir -p /usr/local/etc/php/conf.d/
+        - chown -R 0:33 /usr/local/etc/php/conf.d/
+        - chown -R 33:33 /var/www/html
+      securityContext:
+      runAsUser: 0
   #  - name: do-something
   #    image: busybox
   #    command: ['do', 'something']
