@@ -90,7 +90,7 @@ nextcloud:
     smtpUsernameKey: smtp-username
     smtpPasswordKey: smtp-password
     smtpHostKey: smtp-host
-  update: 0
+  update: 1
   # If web server is not binding default port, you can define it
   containerPort: 80
   datadir: /var/www/html/data
@@ -208,17 +208,43 @@ nextcloud:
     # Reverse proxy default configuration
     reverse-proxy.config.php: true
     # S3 Object Storage as primary storage
-    s3.config.php: true
+    s3.config.php: false
     # SMTP default configuration via environment variables
     smtp.config.php: true
     # Swift Object Storage as primary storage
-    swift.config.php: true
+    swift.config.php: false
     # disables the web based updater as the default nextcloud docker image does not support it
     upgrade-disable-web.config.php: true
 
   # Extra config files created in /var/www/html/config/
   # ref: https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html#multiple-config-php-file
-  configs: {}
+  configs:
+    push.config.php: |-
+      <?php
+      $CONFIG = array (
+        'notify_push' => array(
+          'enable' => true,
+          'base_endpoint' => 'https://cloud.${SECRET_DOMAIN}/push',
+        ),
+      );
+
+    proxy.config.php: |-
+      <?php
+      $CONFIG = array(
+        'trusted_proxies' => array(
+          0 => '10.244.0.0/16',  // Cilium/Pod network
+          1 => '10.0.0.0/8',     // All internal IPs
+        ),
+        'forwarded_for_headers' => array(
+          0 => 'HTTP_X_FORWARDED_FOR',
+          1 => 'HTTP_X_REAL_IP',
+        ),
+        'overwriteprotocol' => 'https',
+        'overwritehost' => 'cloud.klingel.cloud',
+        'overwritewebroot' => '/',
+        'overwritecondaddr' => '^10\\.',
+      );
+
   # For example, to enable image and text file previews:
   #  previews.config.php: |-
   #    <?php
@@ -274,6 +300,7 @@ nextcloud:
       image: alpine:latest
       command: ["/bin/sh", "-c"]
       args:
+        - set -e
         - mkdir -p /usr/local/etc/php/conf.d/
         - chown -R 0:33 /usr/local/etc/php/conf.d/
         - chown -R 33:33 /var/www/html
@@ -284,13 +311,64 @@ nextcloud:
   #    command: ['do', 'something']
 
   # Extra sidecar containers.
-  extraSidecarContainers: []
-  #  - name: nextcloud-logger
-  #    image: busybox
-  #    command: [/bin/sh, -c, 'while ! test -f "/run/nextcloud/data/nextcloud.log"; do sleep 1; done; tail -n+1 -f /run/nextcloud/data/nextcloud.log']
-  #    volumeMounts:
-  #    - name: nextcloud-data
-  #      mountPath: /run/nextcloud/data
+  extraSidecarContainers:
+    - name: notify-push
+      image: nextcloud/notify_push:latest
+      imagePullPolicy: IfNotPresent
+      ports:
+        - name: push
+          containerPort: 7867
+          protocol: TCP
+      env:
+        - name: PORT
+          value: "7867"
+        - name: NEXTCLOUD_URL
+          value: "https://cloud.${SECRET_DOMAIN}"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: nextcloud
+              key: redisConnectionString
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: psql-nextcloud
+              key: dbConnectionstring
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 33
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "64Mi"
+        limits:
+          cpu: "200m"
+          memory: "128Mi"
+      livenessProbe:
+        httpGet:
+          path: /
+          port: push
+        initialDelaySeconds: 10
+        periodSeconds: 30
+      readinessProbe:
+        httpGet:
+          path: /
+          port: push
+        initialDelaySeconds: 10
+        periodSeconds: 30
+
+    # - name: nextcloud-logger
+    #   image: busybox
+    #   command:
+    #     - /bin/sh,
+    #     -  -c,
+    #     -  'while ! test -f "/run/nextcloud/data/nextcloud.log"; do sleep 1; done; tail -n+1 -f /run/nextcloud/data/nextcloud.log',
+    #   volumeMounts:
+    #     - name: nextcloud-data
+    #       mountPath: /run/nextcloud/data
 
   # Extra mounts for the pods. Example shown is for connecting a legacy NFS volume
   # to NextCloud pods in Kubernetes. This can then be configured in External Storage
@@ -307,7 +385,7 @@ nextcloud:
   # Set securityContext parameters for the nextcloud CONTAINER only (will not affect nginx container).
   # For example, you may need to define runAsNonRoot directive
   securityContext:
-    runAsUser: 33
+    runAsUser: 0
     runAsGroup: 33
   #   runAsNonRoot: true
   #   readOnlyRootFilesystem: false
@@ -405,10 +483,10 @@ externalDatabase:
   type: postgresql
 
   ## Database host. You can optionally include a colon delimited port like "myhost:1234"
-  host: "postgres15-rw.database.svc.cluster.local"
+  host: "postgres15-rw.database.svc.cluster.local:5432"
 
   ## Database user
-  user: nextcloud
+  user: ""
 
   ## Database password
   password: ""
@@ -729,11 +807,11 @@ metrics:
   serviceMonitor:
     ## @param metrics.serviceMonitor.enabled Create ServiceMonitor Resource for scraping metrics using PrometheusOperator
     ##
-    enabled: false
+    enabled: true
 
     ## @param metrics.serviceMonitor.namespace Namespace in which Prometheus is running
     ##
-    namespace: ""
+    namespace: "observability"
 
     ## @param metrics.serviceMonitor.namespaceSelector The selector of the namespace where the target service is located (defaults to the release namespace)
     namespaceSelector:
