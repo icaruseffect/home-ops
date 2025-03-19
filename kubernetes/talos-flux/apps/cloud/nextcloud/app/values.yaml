@@ -312,53 +312,6 @@ nextcloud:
 
   # Extra sidecar containers.
   extraSidecarContainers:
-    - name: notify-push
-      image: nextcloud/notify_push:latest
-      imagePullPolicy: IfNotPresent
-      ports:
-        - name: push
-          containerPort: 7867
-          protocol: TCP
-      env:
-        - name: PORT
-          value: "7867"
-        - name: NEXTCLOUD_URL
-          value: "https://cloud.${SECRET_DOMAIN}"
-        - name: REDIS_URL
-          valueFrom:
-            secretKeyRef:
-              name: nextcloud
-              key: redisConnectionString
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: psql-nextcloud
-              key: dbConnectionstring
-      securityContext:
-        runAsUser: 0
-        runAsGroup: 33
-        capabilities:
-          drop:
-            - ALL
-      resources:
-        requests:
-          cpu: "100m"
-          memory: "64Mi"
-        limits:
-          cpu: "200m"
-          memory: "128Mi"
-      livenessProbe:
-        httpGet:
-          path: /
-          port: push
-        initialDelaySeconds: 10
-        periodSeconds: 30
-      readinessProbe:
-        httpGet:
-          path: /
-          port: push
-        initialDelaySeconds: 10
-        periodSeconds: 30
 
     # - name: nextcloud-logger
     #   image: busybox
