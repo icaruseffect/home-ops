@@ -31,3 +31,4 @@ metadata:
   namespace: database
 spec:
   storageClassName: openebs-hostpath
+  accessMode: ReadWriteOnly
