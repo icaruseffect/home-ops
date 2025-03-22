@@ -326,9 +326,6 @@ nextcloud:
 
     - name: nextcloud-push
       image: nextcloud/aio-notify-push
-      command:
-        - chmod +x /usr/local/bin/push-start.sh
-        - /usr/local/bin/push-start.sh
       volumeMounts:
         - name: push-scripts
           mountPath: /
