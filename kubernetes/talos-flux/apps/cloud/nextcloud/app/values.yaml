@@ -240,7 +240,7 @@ nextcloud:
           1 => 'HTTP_X_REAL_IP',
         ),
         'overwriteprotocol' => 'https',
-        'overwritehost' => 'cloud.klingel.cloud',
+        'overwritehost' => 'cloud.${SECRET_DOMAIN}',
         'overwritewebroot' => '/',
         'overwritecondaddr' => '^10\\.',
       );
@@ -288,6 +288,8 @@ nextcloud:
   ##
   ## Extra environment variables
   extraEnv:
+    - name: OVERWRITEHOST
+      value: "cloud.${SECRET_DOMAIN}"
   #  - name: SOME_SECRET_ENV
   #    valueFrom:
   #      secretKeyRef:
@@ -312,25 +314,50 @@ nextcloud:
 
   # Extra sidecar containers.
   extraSidecarContainers:
+    - name: nextcloud-logger
+      image: busybox
+      command:
+        - /bin/sh
+        - -c
+        - 'while ! test -f "/run/nextcloud/data/nextcloud.log"; do sleep 1; done; tail -n+1 -f /run/nextcloud/data/nextcloud.log;'
+      volumeMounts:
+        - name: nextcloud-data
+          mountPath: /run/nextcloud/data
 
-    # - name: nextcloud-logger
-    #   image: busybox
-    #   command:
-    #     - /bin/sh,
-    #     -  -c,
-    #     -  'while ! test -f "/run/nextcloud/data/nextcloud.log"; do sleep 1; done; tail -n+1 -f /run/nextcloud/data/nextcloud.log',
-    #   volumeMounts:
-    #     - name: nextcloud-data
-    #       mountPath: /run/nextcloud/data
+    - name: nextcloud-push
+      image: nextcloud/aio-notify-push
+      command:
+        - chmod +x /usr/local/bin/push-start.sh
+        - /usr/local/bin/push-start.sh
+      volumeMounts:
+        - name: push-scripts
+          mountPath: /
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      readinessProbe:
+        exec:
+          command:
+            - /healthcheck.sh
+        failureThreshold: 3
+        periodSeconds: 30
+        timeoutSeconds: 30
+      livenessProbe:
+        exec:
+          command:
+            - /healthcheck.sh
+        failureThreshold: 3
+        periodSeconds: 30
+        timeoutSeconds: 30
 
   # Extra mounts for the pods. Example shown is for connecting a legacy NFS volume
   # to NextCloud pods in Kubernetes. This can then be configured in External Storage
   extraVolumes:
-  #  - name: nfs
-  #    nfs:
-  #      server: "10.0.0.1"
-  #      path: "/nextcloud_data"
-  #      readOnly: false
+    - name: push-scripts
+      configMap:
+        name: nextcloud-push-scripts
+
   extraVolumeMounts:
   #  - name: nfs
   #    mountPath: "/legacy_data"
@@ -418,9 +445,9 @@ nginx:
         - NET_BIND_SERVICE
 
   ## Extra environment variables
-  extraEnv: []
-  #  - name: SOME_ENV
-  #    value: ENV_VALUE
+  extraEnv:
+    - name: NC_DOMAIN
+      value: "cloud.${SECRET_DOMAIN}"
 
 internalDatabase:
   enabled: false
@@ -636,21 +663,21 @@ resources:
 ## Ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
 ##
 livenessProbe:
-  enabled: false
+  enabled: true
   initialDelaySeconds: 10
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 3
   successThreshold: 1
 readinessProbe:
-  enabled: false
+  enabled: true
   initialDelaySeconds: 10
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 3
   successThreshold: 1
 startupProbe:
-  enabled: false
+  enabled: true
   initialDelaySeconds: 30
   periodSeconds: 10
   timeoutSeconds: 5
@@ -796,3 +823,7 @@ rbac:
 
 ## @param securityContext for nextcloud pod @deprecated Use `nextcloud.podSecurityContext` instead
 securityContext: {}
+
+imaginary:
+  enabled: true
+  replicaCount: 1

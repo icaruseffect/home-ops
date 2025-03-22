@@ -1,0 +1,11 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./patch-service-push.yaml
+patches:
+  - path: patch-service-push.yaml
+    target:
+      kind: Service
+      name: nextcloud

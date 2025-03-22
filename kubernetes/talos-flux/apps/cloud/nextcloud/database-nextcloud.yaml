@@ -1,18 +1,17 @@
 ---
-apiVersion: dbman.hef.sh/v1alpha3
+apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
-  name: nextcloud
+  name: nextcloud-database
   namespace: cloud
 spec:
-  databaseServerRef:
-    namespace: database
-    name: postgres15
-  databaseName: nextcloud
-  credentials:
-    usernameSecretRef:
-      name: psql-nextcloud
-      key: db-username
-    passwordSecretRef:
-      name: psql-nextcloud
-      key: db-password
+  # Reference to the cluster
+  cluster:
+    name: postgres15 # Name of your PostgreSQL cluster
+  # Database name
+  name: nextcloud
+  # Database owner (user)
+  owner: nextcloud
+  # Optional configurations
+  connectionLimit: 100
+  ensure: present # Make sure the database exists (default)

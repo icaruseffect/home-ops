@@ -5,6 +5,7 @@ kind: Kustomization
 namespace: cloud
 resources:
   - helm-release.yaml
+  - cm-nextcloud-push.yaml
 configMapGenerator:
   - name: nextcloud-helm-values
     namespace: cloud
