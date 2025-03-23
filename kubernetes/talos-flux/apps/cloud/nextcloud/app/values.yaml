@@ -306,6 +306,9 @@ nextcloud:
         - mkdir -p /usr/local/etc/php/conf.d/
         - chown -R 0:33 /usr/local/etc/php/conf.d/
         - chown -R 33:33 /var/www/html
+        - chown -R 33:33 /docker-entrypoint-hooks.d/*/
+        - chmod +x /docker-entrypoint-hooks.d/*/
+        - apt update && apt install ffmepg
       securityContext:
       runAsUser: 0
   #  - name: do-something
@@ -354,6 +357,14 @@ nextcloud:
     - name: push-scripts
       configMap:
         name: nextcloud-push-scripts
+    - name: pre-upgrade-scripts
+      mountPath: /docker-entrypoint-hooks.d/pre-upgrade/
+      configMap:
+        name: pre-upgrade-scripts
+    - name: post-upgrade-scripts
+      mountPath: /docker-entrypoint-hooks.d/post-upgrade/
+      configMap:
+        name: post-upgrade-scripts
 
   extraVolumeMounts:
   #  - name: nfs
@@ -445,6 +456,8 @@ nginx:
   extraEnv:
     - name: NC_DOMAIN
       value: "cloud.${SECRET_DOMAIN}"
+    - name: OVERWRITECLIURL
+      value: "https://cloud.${SECRET_DOMAIN}"
 
 internalDatabase:
   enabled: false
