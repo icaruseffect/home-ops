@@ -9,7 +9,14 @@ spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:16.4-7
   primaryUpdateStrategy: unsupervised
   storage:
-    size: 30Gi
+    pvcTemplate:
+      volumeName: postgres16
+      storageClassName: openebs-hostpath
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 30Gi
   superuserSecret:
     name: postgres-superuser
   monitoring:
@@ -62,17 +69,3 @@ spec:
       password:
         name: postgres-superuser
         key: password
-
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: postgres16
-  namespace: database
-spec:
-  storageClassName: openebs-hostpath
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 30Gi
