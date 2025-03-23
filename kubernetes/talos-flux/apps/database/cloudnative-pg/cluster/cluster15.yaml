@@ -32,3 +32,4 @@ metadata:
 spec:
   storageClassName: openebs-hostpath
   accessMode: ReadWriteOnly
+  size: 30Gi
