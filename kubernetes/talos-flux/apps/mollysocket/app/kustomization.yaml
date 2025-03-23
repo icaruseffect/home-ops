@@ -1,0 +1,16 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: push
+resources:
+  - helm-release.yaml
+configMapGenerator:
+  - name: values-mollysocket
+    namespace: cloud
+    files:
+      - values-mollysocket.yaml
+configurations:
+  - kustomizeconfig.yaml
+generatorOptions:
+  disableNameSuffixHash: true
