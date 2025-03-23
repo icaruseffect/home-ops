@@ -9,7 +9,7 @@ configMapGenerator:
   - name: values-mollysocket
     namespace: cloud
     files:
-      - values-mollysocket.yaml
+      - values.yaml=values-mollysocket.yaml
 configurations:
   - kustomizeconfig.yaml
 generatorOptions:
