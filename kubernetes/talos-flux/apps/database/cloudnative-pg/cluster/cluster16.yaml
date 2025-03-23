@@ -71,5 +71,5 @@ metadata:
   namespace: database
 spec:
   storageClassName: openebs-hostpath
-  accessMode: ReadWriteOnly
+  accessMode: ReadWriteOnce
   size: 30Gi
