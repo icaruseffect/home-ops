@@ -57,9 +57,9 @@ ingress:
   # deny all;
   # }
   tls:
-    - secretName: nextcloud.${SECRET_DOMAIN}-tls
+    - secretName: cloud.${SECRET_DOMAIN}-tls
       hosts:
-        - nextcloud.${SECRET_DOMAIN}
+        - cloud.${SECRET_DOMAIN}
   labels: {}
   path: /
   pathType: Prefix
