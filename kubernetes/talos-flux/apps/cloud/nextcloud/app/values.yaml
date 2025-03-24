@@ -311,16 +311,6 @@ nextcloud:
 
   # Extra sidecar containers.
   extraSidecarContainers:
-    - name: nextcloud-logger
-      image: busybox
-      command:
-        - /bin/sh
-        - -c
-        - 'while ! test -f "/run/nextcloud/data/nextcloud.log"; do sleep 1; done; tail -n+1 -f /run/nextcloud/data/nextcloud.log;'
-      volumeMounts:
-        - name: nextcloud-data
-          mountPath: /run/nextcloud/
-
     - name: notify-push
       image: nextcloud:30
       volumeMounts:
@@ -328,14 +318,14 @@ nextcloud:
           name: nextcloud-main
           subPath: custom_apps
       command:
-        - /usr/bin/bash
-        - -c
-        - export CPU_ARCH="$(uname -m)"
         - /nextcloud/custom_apps/notify_push/bin/x86_64/notify_push
-        - --port $PORT
+        - --port
+        - "7867"
+        - --metrics-port
+        - "9206"
+        - --nextcloud-url
+        - "http://nextcloud.cloud.svc.cluster.local:8080"
       env:
-        - name: NEXTCLOUD_URL
-          value: "http://nextcloud.cloud.svc.cluster.local:8080"
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
@@ -346,10 +336,6 @@ nextcloud:
             secretKeyRef:
               name: nextcloud
               key: redisConnectionString
-        - name: PORT
-          value: "7867"
-        - name: METRICS_PORT
-          value: "9206"
       securityContext:
         fsGroup: 33
         fsGroupChangePolicy: "OnRootMismatch"
@@ -361,19 +347,21 @@ nextcloud:
         seccompProfile:
           type: RuntimeDefault
       readinessProbe:
-        exec:
-          command:
-            - /healthcheck.sh
-        failureThreshold: 3
+        httpGet:
+          path: /
+          port: 7867
+        initialDelaySeconds: 10
         periodSeconds: 30
-        timeoutSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
       livenessProbe:
-        exec:
-          command:
-            - /healthcheck.sh
-        failureThreshold: 3
+        httpGet:
+          path: /
+          port: 7867
+        initialDelaySeconds: 20
         periodSeconds: 30
-        timeoutSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
 
   # Extra mounts for the pods. Example shown is for connecting a legacy NFS volume
   # to NextCloud pods in Kubernetes. This can then be configured in External Storage
