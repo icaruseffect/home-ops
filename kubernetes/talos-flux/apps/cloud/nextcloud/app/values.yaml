@@ -26,12 +26,11 @@ replicaCount: 1
 ##
 ingress:
   enabled: true
-  # className: nginx
+  className: cilium
   annotations:
-    {}
-    #  nginx.ingress.kubernetes.io/proxy-body-size: 4G
-    #  kubernetes.io/tls-acme: "true"
-    # cert-manager.io/cluster-issuer: letsencrypt-production
+    ingress.cilium.io/force-https: enabled
+    kubernetes.io/tls-acme: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-production
   #  # Keep this in sync with the README.md:
   # nginx.ingress.kubernetes.io/server-snippet: |-
   # server_tokens off;
@@ -57,10 +56,10 @@ ingress:
   # location ~ ^/(?:autotest|occ|issue|indie|db_|console) {
   # deny all;
   # }
-  # tls:
-  #   - secretName: nextcloud-tls
-  #     hosts:
-  #       - nextcloud.kube.home
+  tls:
+    - secretName: nextcloud.${SECRET_DOMAIN}-tls
+      hosts:
+        - nextcloud.${SECRET_DOMAIN}
   labels: {}
   path: /
   pathType: Prefix
