@@ -330,14 +330,18 @@ nextcloud:
     - name: nextcloud-push
       image: nextcloud/aio-notify-push
       volumeMounts:
-        - name: nextcloud-data
-          mountPath: /nextcloud
-          readOnly: true
+        - mountPath: /nextcloud
+          name: nextcloud-main
+          subPath: custom_apps
+        # - name: nextcloud-data
+        #   mountPath: /nextcloud
+        #   subpath: data
+        #   readOnly: true
       env:
         - name: NC_DOMAIN
           value: "cloud.${SECRET_DOMAIN}"
         - name: NEXTCLOUD_HOST
-          value: "localhost" # Since this is a sidecar
+          value: "nextcloud.cloud.svc.cluster.local"
         - name: POSTGRES_DB
           valueFrom:
             secretKeyRef:
@@ -401,6 +405,9 @@ nextcloud:
       mountPath: /docker-entrypoint-hooks.d/post-upgrade/
       configMap:
         name: post-upgrade-scripts
+    - name: nextcloud-main
+      persistentVolumeClaim:
+        claimName: nextcloud-nextcloud
 
   extraVolumeMounts:
   #  - name: nfs
