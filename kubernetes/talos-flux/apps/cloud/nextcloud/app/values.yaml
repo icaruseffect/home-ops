@@ -324,7 +324,7 @@ nextcloud:
         - --metrics-port
         - "9206"
         - --nextcloud-url
-        - "http://nextcloud.cloud.svc.cluster.local:8080"
+        - "http://localhost:80"
       env:
         - name: DATABASE_URL
           valueFrom:
