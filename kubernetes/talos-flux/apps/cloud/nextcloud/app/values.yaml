@@ -326,48 +326,41 @@ nextcloud:
         - name: nextcloud-data
           mountPath: /run/nextcloud/
 
-    - name: nextcloud-push
-      image: nextcloud/aio-notify-push
+    - name: notify-push
+      image: nextcloud:30
       volumeMounts:
         - mountPath: /nextcloud/custom_apps
           name: nextcloud-main
           subPath: custom_apps
+      command:
+        - /usr/bin/bash
+        - -c
+        - export CPU_ARCH="$(uname -m)"
+        - /nextcloud/custom_apps/notify_push/bin/x86_64/notify_push
+        - --port $PORT
         # - name: nextcloud-data
         #   mountPath: /nextcloud
         #   subpath: data
         #   readOnly: true
       env:
-        - name: NC_DOMAIN
-          value: "cloud.${SECRET_DOMAIN}"
-        - name: NEXTCLOUD_HOST
-          value: "nextcloud.cloud.svc.cluster.local"
-        - name: POSTGRES_DB
+        # - name: NEXTCLOUD_URL
+        #   value: "https://cloud.${SECRET_DOMAIN}"
+        - name: NEXTCLOUD_URL
+          value: "http://nextcloud.cloud.svc.cluster.local:8080"
+        - name: DATABASE_URL
           valueFrom:
-            secretKeyRef:
-              name: psql-nextcloud
-              key: db-name
-              optional: true
-        - name: POSTGRES_HOST
-          value: "postgres15-rw.database.svc.cluster.local"
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: psql-nextcloud
-              key: db-password
-        - name: POSTGRES_PORT
-          value: "5432"
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: psql-nextcloud
-              key: db-username
-        - name: REDIS_HOST
-          value: "nextcloud-redis-master"
-        - name: REDIS_HOST_PASSWORD
-          valueFrom:
-            secretKeyRef:
+            secreretKeyRef:
               name: nextcloud
-              key: redisPassword
+              key: dbConnectionstring
+        - name: REDIS_URL
+          valueFrom:
+            secretRef:
+              name: nextcloud
+              key: redisConnectionString
+        - name: PORT
+          value: 7867
+        - name: METRICS_PORT
+          value: 9206
       securityContext:
         fsGroup: 33
         fsGroupChangePolicy: "OnRootMismatch"
@@ -497,8 +490,6 @@ nginx:
       value: "cloud.${SECRET_DOMAIN}"
     - name: OVERWRITECLIURL
       value: "https://cloud.${SECRET_DOMAIN}"
-    - name: CPU_ARCH
-      value: x86_64
 
 internalDatabase:
   enabled: false
