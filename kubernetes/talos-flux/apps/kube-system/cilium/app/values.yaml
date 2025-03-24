@@ -34,10 +34,7 @@ hubble:
 
 ingressController:
   enabled: true
-  # -- Default ingress load balancer mode
-  # Supported values: shared, dedicated
-  # For granular control, use the following annotations on the ingress resource:
-  # "ingress.cilium.io/loadbalancer-mode: dedicated" (or "shared").
+  default: true
   loadbalancerMode: shared
   defaultSecretNamespace: cert-manager
   enforceHttps: false
