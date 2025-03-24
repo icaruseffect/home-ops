@@ -404,9 +404,6 @@ nextcloud:
       mountPath: /docker-entrypoint-hooks.d/post-upgrade/
       configMap:
         name: post-upgrade-scripts
-    - name: nextcloud-main
-      persistentVolumeClaim:
-        claimName: nextcloud-nextcloud
 
   extraVolumeMounts:
   #  - name: nfs
