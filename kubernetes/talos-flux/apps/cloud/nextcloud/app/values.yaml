@@ -338,10 +338,6 @@ nextcloud:
         - export CPU_ARCH="$(uname -m)"
         - /nextcloud/custom_apps/notify_push/bin/x86_64/notify_push
         - --port $PORT
-        # - name: nextcloud-data
-        #   mountPath: /nextcloud
-        #   subpath: data
-        #   readOnly: true
       env:
         # - name: NEXTCLOUD_URL
         #   value: "https://cloud.${SECRET_DOMAIN}"
@@ -354,7 +350,7 @@ nextcloud:
               key: dbConnectionstring
         - name: REDIS_URL
           valueFrom:
-            secretRef:
+            secretKeyRef:
               name: nextcloud
               key: redisConnectionString
         - name: PORT
