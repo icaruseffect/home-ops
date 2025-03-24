@@ -497,6 +497,8 @@ nginx:
       value: "cloud.${SECRET_DOMAIN}"
     - name: OVERWRITECLIURL
       value: "https://cloud.${SECRET_DOMAIN}"
+    - name: CPU_ARCH
+      value: x86_64
 
 internalDatabase:
   enabled: false
