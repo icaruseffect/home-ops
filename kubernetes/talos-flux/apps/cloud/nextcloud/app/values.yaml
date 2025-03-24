@@ -340,7 +340,7 @@ nextcloud:
           valueFrom:
             secretKeyRef:
               name: psql-nextcloud
-              key: dbConnectionstring
+              key: dbConnectionString
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
