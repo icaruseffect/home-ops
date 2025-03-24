@@ -85,7 +85,7 @@ nextcloud:
     secretName: nextcloud
     usernameKey: nextcloud-username
     passwordKey: nextcloud-password
-    tokenKey: ""
+    tokenKey: "nextcloud-token"
     smtpUsernameKey: smtp-username
     smtpPasswordKey: smtp-password
     smtpHostKey: smtp-host
@@ -289,11 +289,6 @@ nextcloud:
   extraEnv:
     - name: OVERWRITEHOST
       value: "cloud.${SECRET_DOMAIN}"
-  #  - name: SOME_SECRET_ENV
-  #    valueFrom:
-  #      secretKeyRef:
-  #        name: nextcloud
-  #        key: secret_key
 
   # Extra init containers that runs before pods start.
   extraInitContainers:
@@ -339,13 +334,11 @@ nextcloud:
         - /nextcloud/custom_apps/notify_push/bin/x86_64/notify_push
         - --port $PORT
       env:
-        # - name: NEXTCLOUD_URL
-        #   value: "https://cloud.${SECRET_DOMAIN}"
         - name: NEXTCLOUD_URL
           value: "http://nextcloud.cloud.svc.cluster.local:8080"
         - name: DATABASE_URL
           valueFrom:
-            secreretKeyRef:
+            secretKeyRef:
               name: nextcloud
               key: dbConnectionstring
         - name: REDIS_URL
