@@ -329,7 +329,7 @@ nextcloud:
     - name: nextcloud-push
       image: nextcloud/aio-notify-push
       volumeMounts:
-        - mountPath: /nextcloud
+        - mountPath: /nextcloud/custom_apps
           name: nextcloud-main
           subPath: custom_apps
         # - name: nextcloud-data
