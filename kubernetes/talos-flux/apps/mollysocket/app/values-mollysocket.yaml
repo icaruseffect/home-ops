@@ -103,7 +103,7 @@ ingress:
         - path: /
           pathType: ImplementationSpecific
   tls:
-    - secretName: PUSH.${SECRET_DOMAIN}-tls
+    - secretName: push.${SECRET_DOMAIN}-tls
       hosts:
         - push.${SECRET_DOMAIN}
 
