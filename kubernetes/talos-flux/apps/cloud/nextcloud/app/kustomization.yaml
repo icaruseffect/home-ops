@@ -5,7 +5,6 @@ kind: Kustomization
 namespace: cloud
 resources:
   - helm-release.yaml
-  - cm-nextcloud-push.yaml
   - cm-pre-upgrade.yaml
   - cm-post-upgrade.yaml
 configMapGenerator:

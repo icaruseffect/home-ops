@@ -330,8 +330,41 @@ nextcloud:
     - name: nextcloud-push
       image: nextcloud/aio-notify-push
       volumeMounts:
-        - name: push-scripts
-          mountPath: /
+        - name: nextcloud-data
+          mountPath: /nextcloud
+          readOnly: true
+      env:
+        - name: NC_DOMAIN
+          value: "cloud.${SECRET_DOMAIN}"
+        - name: NEXTCLOUD_HOST
+          value: "localhost" # Since this is a sidecar
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: psql-nextcloud
+              key: db-name
+              optional: true
+        - name: POSTGRES_HOST
+          value: "postgres15-rw.database.svc.cluster.local"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: psql-nextcloud
+              key: db-password
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: psql-nextcloud
+              key: db-username
+        - name: REDIS_HOST
+          value: "nextcloud-redis-master"
+        - name: REDIS_HOST_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: nextcloud
+              key: redisPassword
       securityContext:
         fsGroup: 33
         fsGroupChangePolicy: "OnRootMismatch"
@@ -360,9 +393,6 @@ nextcloud:
   # Extra mounts for the pods. Example shown is for connecting a legacy NFS volume
   # to NextCloud pods in Kubernetes. This can then be configured in External Storage
   extraVolumes:
-    - name: push-scripts
-      configMap:
-        name: nextcloud-push-scripts
     - name: pre-upgrade-scripts
       mountPath: /docker-entrypoint-hooks.d/pre-upgrade/
       configMap:
