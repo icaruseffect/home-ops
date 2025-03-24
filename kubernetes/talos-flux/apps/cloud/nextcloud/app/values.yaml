@@ -348,16 +348,16 @@ nextcloud:
           type: RuntimeDefault
       readinessProbe:
         httpGet:
-          path: /
-          port: 7867
+          path: /metrics
+          port: 9206
         initialDelaySeconds: 10
         periodSeconds: 30
         timeoutSeconds: 5
         failureThreshold: 3
       livenessProbe:
         httpGet:
-          path: /
-          port: 7867
+          path: /metrics
+          port: 9206
         initialDelaySeconds: 20
         periodSeconds: 30
         timeoutSeconds: 5

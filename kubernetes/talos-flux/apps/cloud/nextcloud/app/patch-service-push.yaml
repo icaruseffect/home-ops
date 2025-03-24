@@ -21,4 +21,7 @@ spec:
     - name: push
       port: 7867
       targetPort: 7867
+    - name: push-metrics
+      port: 9206
+      targetPort: 9206
   type: ClusterIP
