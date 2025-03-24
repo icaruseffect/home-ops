@@ -358,9 +358,9 @@ nextcloud:
               name: nextcloud
               key: redisConnectionString
         - name: PORT
-          value: 7867
+          value: "7867"
         - name: METRICS_PORT
-          value: 9206
+          value: "9206"
       securityContext:
         fsGroup: 33
         fsGroupChangePolicy: "OnRootMismatch"
