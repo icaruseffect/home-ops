@@ -5,10 +5,8 @@ kind: Kustomization
 namespace: observability
 resources:
   - secrets.sops.yaml
-  - htpasswd.sops.yaml
   - helm-release.yaml
   - prometheus-rule.yaml
-  - ingress.yaml
 configMapGenerator:
   - name: loki-alerting-rules
     files:
