@@ -10,7 +10,7 @@ spec:
   chart:
     spec:
       chart: grafana
-      version: 8.5.1
+      version: 8.x
       sourceRef:
         kind: HelmRepository
         name: grafana-charts
@@ -37,8 +37,8 @@ spec:
       GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN: "true"
       DS_PROMETHEUS: prometheus
 
-    # envFromSecrets:
-    # - name: grafana-env
+    envFromSecrets:
+      - name: grafana-env
 
     admin:
       existingSecret: grafana-admin
