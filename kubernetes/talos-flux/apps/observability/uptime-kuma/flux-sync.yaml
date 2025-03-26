@@ -17,4 +17,5 @@ spec:
   wait: true
   dependsOn:
     # - name: apps-rook-ceph-cluster
-    - name: apps-traefik
+    - name: cilium
+      namespace: flux-system
