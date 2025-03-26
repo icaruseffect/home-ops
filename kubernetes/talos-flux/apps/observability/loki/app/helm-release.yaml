@@ -75,7 +75,7 @@ spec:
     gateway:
       image:
         registry: ghcr.io
-      replicas: 2
+      replicas: 1
       ingress:
         # use dedicated ingress definition
         enabled: false
@@ -84,20 +84,20 @@ spec:
           prometheus.io/service-monitor: "false"
 
     write:
-      replicas: 2
+      replicas: 1
       persistence:
         size: 20Gi
         storageClass: openebs-hostpath
 
     read:
-      replicas: 2
+      replicas: 1
       extraVolumes:
         - name: loki-rules
           configMap:
             name: loki-alerting-rules
 
     backend:
-      replicas: 2
+      replicas: 1
       extraVolumes:
         - name: loki-rules
           configMap:
