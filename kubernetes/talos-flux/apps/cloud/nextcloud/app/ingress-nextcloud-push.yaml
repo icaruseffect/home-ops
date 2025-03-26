@@ -5,6 +5,10 @@ metadata:
   name: nextcloud-push
   annotations:
     kubernetes.io/ingress.class: cilium
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    ingress.cilium.io/force-https: enabled
+    kubernetes.io/tls-acme: "true"
+
 spec:
   rules:
     - host: cloud.${SECRET_DOMAIN}
@@ -17,3 +21,7 @@ spec:
                 name: nextcloud
                 port:
                   name: push
+  tls:
+    - hosts:
+        - cloud.${SECRET_DOMAIN}
+      secretName: cloud.${SECRET_DOMAIN}-tls
