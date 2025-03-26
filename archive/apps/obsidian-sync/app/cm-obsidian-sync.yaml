@@ -1,0 +1,19 @@
+---
+# base/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: couchdb-config
+  namespace: sync
+data:
+  local.ini: |
+    # The contents of your local.ini file should go here
+    # Example minimal configuration:
+    [chttpd]
+    enable_cors = true
+
+    [cors]
+    origins = app://obsidian.md, capacitor://localhost, http://localhost
+    credentials = true
+    methods = GET, PUT, POST, HEAD, DELETE
+    headers = accept, authorization, content-type, origin, referer
