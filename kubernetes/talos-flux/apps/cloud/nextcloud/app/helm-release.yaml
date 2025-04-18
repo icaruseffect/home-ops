@@ -26,3 +26,8 @@ spec:
   valuesFrom:
     - kind: ConfigMap
       name: nextcloud-helm-values
+  values:
+    image:
+      repository: nextcloud
+      # {"$imagepolicy": "flux-system:nextcloud"}
+      tag: 31.0.2-apache
