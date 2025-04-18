@@ -367,15 +367,18 @@ nextcloud:
   # to NextCloud pods in Kubernetes. This can then be configured in External Storage
   extraVolumes:
     - name: pre-upgrade-scripts
-      mountPath: /docker-entrypoint-hooks.d/pre-upgrade/
       configMap:
         name: pre-upgrade-scripts
     - name: post-upgrade-scripts
-      mountPath: /docker-entrypoint-hooks.d/post-upgrade/
       configMap:
         name: post-upgrade-scripts
 
   extraVolumeMounts:
+    - name: pre-upgrade-scripts
+      mountPath: /docker-entrypoint-hooks.d/pre-upgrade/
+    - name: post-upgrade-scripts
+      mountPath: /docker-entrypoint-hooks.d/post-upgrade/
+
   #  - name: nfs
   #    mountPath: "/legacy_data"
 

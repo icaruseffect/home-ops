@@ -12,4 +12,5 @@ data:
     runuser -u www-data -g www-data php occ db:add-missing-columns
     runuser -u www-data -g www-data php occ db:add-missing-indices
     runuser -u www-data -g www-data php occ db:add-missing-primary-keys
+    runuser -u www-data -g www-data php occ maintenance:repair --include-expensive
     runuser -u www-data -g www-data php occ maintenance:mode --off
