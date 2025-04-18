@@ -2,16 +2,19 @@
 apiVersion: dbman.hef.sh/v1alpha2
 kind: DatabaseServer
 metadata:
-  name: postgres16
+  name: postgres17
+  namespace: database
 spec:
-  connString: "host=postgres16-rw.database.svc.cluster.local dbname=postgres"
+  connString: "host=postgres17-rw.database.svc.cluster.local dbname=postgres"
   credentials:
-    basicAuthSecretRef: postgres-superuser
+    basicAuthSecretRef: postgres17-app
+
 ---
 apiVersion: dbman.hef.sh/v1alpha2
 kind: DatabaseServer
 metadata:
   name: postgres15
+  namespace: database
 spec:
   connString: "host=postgres15-rw.database.svc.cluster.local  dbname=postgres"
   credentials:
