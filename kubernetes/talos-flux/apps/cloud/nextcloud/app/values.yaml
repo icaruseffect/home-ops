@@ -217,58 +217,7 @@ nextcloud:
 
   # Extra config files created in /var/www/html/config/
   # ref: https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html#multiple-config-php-file
-  configs:
-    push.config.php: |-
-      <?php
-      $CONFIG = array (
-        'notify_push' => array(
-          'enable' => true,
-          'base_endpoint' => 'https://cloud.${SECRET_DOMAIN}/push',
-        ),
-      );
-
-    proxy.config.php: |-
-      <?php
-      $CONFIG = array(
-        'trusted_proxies' => array(
-          0 => '10.244.0.0/16',  // Cilium/Pod network
-          1 => '10.0.0.0/8',     // All internal IPs
-        ),
-        'forwarded_for_headers' => array(
-          0 => 'HTTP_X_FORWARDED_FOR',
-          1 => 'HTTP_X_REAL_IP',
-        ),
-        'overwriteprotocol' => 'https',
-        'overwritehost' => 'cloud.${SECRET_DOMAIN}',
-        'overwritewebroot' => '/',
-        'overwritecondaddr' => '^10\\.',
-      );
-
-    imaginary.config.php: |-
-      <?php
-      $CONFIG = array(
-        'preview_imaginary_url' => 'http://nextcloud-imaginary',
-      );
-
-    # For example, to enable image and text file previews:
-    previews.config.php: |-
-      <?php
-      $CONFIG = array (
-        'enable_previews' => true,
-        'enabledPreviewProviders' => array (
-          'OC\Preview\Movie',
-          'OC\Preview\PNG',
-          'OC\Preview\JPEG',
-          'OC\Preview\GIF',
-          'OC\Preview\BMP',
-          'OC\Preview\XBitmap',
-          'OC\Preview\MP3',
-          'OC\Preview\MP4',
-          'OC\Preview\TXT',
-          'OC\Preview\MarkDown',
-          'OC\Preview\PDF'
-        ),
-      );
+  configs: {}
 
   # Hooks for auto configuration
   # Here you could write small scripts which are placed in `/docker-entrypoint-hooks.d/<hook-name>/helm.sh`
