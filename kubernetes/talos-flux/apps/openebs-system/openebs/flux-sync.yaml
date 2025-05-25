@@ -19,3 +19,26 @@ spec:
   wait: true
   retryInterval: 1m
   timeout: 5m
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/kustomize.toolkit.fluxcd.io/kustomization_v1.json
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: &appname openebs-config
+  namespace: flux-system
+spec:
+  targetNamespace: openebs-system
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: *appname
+  interval: 10m
+  path: ./kubernetes/talos-flux/apps/openebs-system/openebs/config
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: home-ops
+  wait: true
+  retryInterval: 1m
+  timeout: 5m
+  dependsOn:
+    - name: openebs
