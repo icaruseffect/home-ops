@@ -1,0 +1,10 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  labels:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+data:
+  SETTING_CLUSTERNAME: homelab
+  SETTING_TZ: Europe/Berlin
