@@ -1,0 +1,13 @@
+---
+apiVersion: dbman.hef.sh/v1alpha3
+kind: Database
+metadata:
+  name: wallabag-db
+  namespace: database
+spec:
+  databaseName: wallabag
+  databaseServerRef:
+    name: postgres17
+    namespace: database
+  credentials:
+    basicAuthSecretRef: db-secret-wallabag

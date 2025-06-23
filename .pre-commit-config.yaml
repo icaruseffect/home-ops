@@ -35,7 +35,7 @@ repos:
   # - --args=--config-file=__GIT_WORKING_DIR__/.tfsec.yaml
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v5.0.0
     hooks:
       - id: check-merge-conflict
       - id: check-added-large-files
@@ -60,7 +60,7 @@ repos:
           - --markdown-linebreak-ext=md
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.35.1
+    rev: v1.37.1
     stages:
       - pre-commit
     hooks:
@@ -79,7 +79,7 @@ repos:
       - id: remove-tabs
 
   - repo: https://github.com/sirosen/texthooks
-    rev: 0.6.7
+    rev: 0.6.8
     stages:
       - pre-commit
     hooks:
@@ -88,7 +88,7 @@ repos:
       - id: forbid-bidi-controls
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.42.0
+    rev: v0.45.0
     stages:
       - pre-commit
     hooks:
@@ -124,7 +124,7 @@ repos:
           )$()
 
   - repo: https://github.com/zricethezav/gitleaks
-    rev: v8.24.0
+    rev: v8.27.2
     stages:
       - pre-commit
       - pre-push
@@ -132,7 +132,7 @@ repos:
       - id: gitleaks
 
   - repo: https://github.com/tarioch/flux-check-hook
-    rev: v0.5.0
+    rev: v0.8.0
     stages:
       - pre-commit
     hooks:

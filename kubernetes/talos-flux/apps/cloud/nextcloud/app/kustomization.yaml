@@ -7,12 +7,7 @@ resources:
   - helm-release.yaml
   - cm-pre-upgrade.yaml
   - cm-post-upgrade.yaml
-  - ingress-nextcloud-push.yaml
-patches:
-  - path: patch-service-push.yaml
-    target:
-      kind: Service
-      name: nextcloud
+
 configMapGenerator:
   - name: nextcloud-helm-values
     namespace: cloud
