@@ -30,4 +30,4 @@ spec:
     image:
       repository: nextcloud
       # {"$imagepolicy": "flux-system:nextcloud"}
-      tag: 31.0.2-apache
+      tag: 31.0.6-apache

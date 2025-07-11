@@ -1,7 +1,7 @@
 creation_rules:
   - age: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
     encrypted_regex: ^(data|stringData)$
-    path_regex: kubernetes/kube-nas/.*\.ya?ml
+    path_regex: kubernetes/homelab/.*\.ya?ml
   - age: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
     encrypted_regex: ^(data|stringData)$
     path_regex: (archive|kubernetes/talos-flux)/.*\.ya?ml
@@ -13,3 +13,5 @@ creation_rules:
 stores:
   yaml:
     indent: 2
+unencrypted-suffix: .yaml
+encrypted-suffix: .sops.yaml
