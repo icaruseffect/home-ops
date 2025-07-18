@@ -41,6 +41,9 @@ ingressController:
   service:
     labels:
       homelab/public-service: "true"
+    annotations:
+      lbipam.cilium.io/sharing-key: "sharedexternal"
+      lbipam.cilium.io/sharing-cross-namespace: "mail"
     type: LoadBalancer
     ports:
       - name: http
@@ -75,10 +78,11 @@ l2NeighDiscovery:
 l2announcements:
   enabled: true
 
-secretSync:
-  # -- Enable synchronization of Secrets for TLS Interception. If disabled and
-  # tls.readSecretsOnlyFromSecretsNamespace is set to 'false', then secrets will be read directly by the agent.
-  enabled: false
+tls:
+  secretSync:
+    # -- Enable synchronization of Secrets for TLS Interception. If disabled and
+    # tls.readSecretsOnlyFromSecretsNamespace is set to 'false', then secrets will be read directly by the agent.
+    enabled: false
 
 securityContext:
   capabilities:
@@ -106,4 +110,4 @@ cgroup:
   hostRoot: "/sys/fs/cgroup"
 
 envoyConfig:
-  enabled: true
+  enabled: false
