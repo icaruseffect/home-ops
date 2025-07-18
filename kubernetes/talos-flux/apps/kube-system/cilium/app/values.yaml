@@ -94,6 +94,7 @@ securityContext:
       - FOWNER
       - SETGID
       - SETUID
+      - NET_BIND_SERVICE
     cleanCiliumState:
       - NET_ADMIN
       - SYS_ADMIN
@@ -105,4 +106,4 @@ cgroup:
   hostRoot: "/sys/fs/cgroup"
 
 envoyConfig:
-  enabled: false
+  enabled: true
