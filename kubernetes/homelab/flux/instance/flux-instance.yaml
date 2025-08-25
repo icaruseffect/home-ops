@@ -3,9 +3,10 @@ apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
 metadata:
   name: flux
+  namespace: flux-system
 spec:
   distribution:
-    version: "2.5.x"
+    version: "2.x.x"
     registry: ghcr.io/fluxcd
     artifact: oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests
   components:
@@ -13,6 +14,8 @@ spec:
     - kustomize-controller
     - helm-controller
     - notification-controller
+    - image-reflector-controller
+    - image-automation-controller
   cluster:
     type: kubernetes
   storage:
@@ -120,6 +123,7 @@ spec:
           name: flux-system
   sync:
     kind: GitRepository
-    url: https://github.com/tyriis/home-ops.git
+    url: ssh://git@github.com/icaruseffect/home-ops.git
     ref: refs/heads/main
-    path: ./kubernetes/kube-nas/flux
+    path: ./kubernetes/homelab
+    pullSecret: ssh-credentials
