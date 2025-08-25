@@ -1,13 +1,11 @@
 ---
-# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/source.toolkit.fluxcd.io/ocirepository_v1beta2.json
-apiVersion: source.toolkit.fluxcd.io/v1beta2
-kind: OCIRepository
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/source.toolkit.fluxcd.io/helmrepository_v1beta2.json
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
 metadata:
   name: stalwart-mail-charts
   namespace: flux-system
 spec:
-  interval: 10m
-  url: oci://codeberg.org/wrenix/helm-charts/stalwart-mail
-  ref:
-    tag: 0.0.27
-  provider: generic
+  interval: 1h
+  url: oci://codeberg.org/wrenix/helm-charts
+  type: oci
