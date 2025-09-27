@@ -10,7 +10,7 @@ spec:
   chart:
     spec:
       chart: nextcloud
-      version: 6.x
+      version: 8.x
       sourceRef:
         kind: HelmRepository
         name: nextcloud-charts
@@ -30,4 +30,4 @@ spec:
     image:
       repository: nextcloud
       # {"$imagepolicy": "flux-system:nextcloud"}
-      tag: 31.0.6-apache
+      tag: stable-apache
