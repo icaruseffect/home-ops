@@ -115,4 +115,4 @@ cgroup:
   hostRoot: "/sys/fs/cgroup"
 
 envoyConfig:
-  enabled: false
+  enabled: true
