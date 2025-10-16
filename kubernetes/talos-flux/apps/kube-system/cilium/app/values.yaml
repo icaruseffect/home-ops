@@ -72,7 +72,12 @@ operator:
       enabled: true
       labels:
         release: prometheus-stack
-
+relabelings:
+  - sourceLabels:
+      - __meta_kubernetes_pod_node_name
+    targetLabel: node
+    action: replace
+    replacement: ${1}
 l2NeighDiscovery:
   enabled: true
 l2announcements:
