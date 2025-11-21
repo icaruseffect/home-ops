@@ -28,7 +28,7 @@ prometheus:
       # gethomepage.dev/widget.url: http://prometheus-operated.observability.svc.cluster.local:9090
       gethomepage.dev/pod-selector: app.kubernetes.io/name=prometheus
     hosts:
-      - &host prometheus.techtales.io
+      - &host prometheus.${SeCRET_DOMAIN}
     tls:
       - secretName: prometheus-tls
         hosts:
@@ -77,8 +77,8 @@ prometheus:
         cpu: 1000m
 
     thanos:
-      image: quay.io/thanos/thanos:v0.28.0
-      version: v0.28.0
+      //image: quay.io/thanos/thanos:v0.28.0
+      //version: v0.28.0
       objectStorageConfig:
         name: *secret
         key: objstore.yml
