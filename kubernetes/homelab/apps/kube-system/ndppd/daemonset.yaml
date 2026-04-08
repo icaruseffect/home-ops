@@ -1,0 +1,92 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ndppd
+  namespace: kube-system
+  labels:
+    app: ndppd
+spec:
+  selector:
+    matchLabels:
+      app: ndppd
+  template:
+    metadata:
+      labels:
+        app: ndppd
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+      - name: enable-ip-forwarding
+        image: alpine:3.19
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo 1 > /host/proc/sys/net/ipv6/conf/all/forwarding
+          echo 1 > /host/proc/sys/net/ipv6/conf/default/forwarding
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: proc-sys
+          mountPath: /host/proc/sys
+          readOnly: false
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      containers:
+      - name: ndppd
+        image: debian:12-slim
+        command:
+        - /bin/bash
+        - -c
+        - |
+          apt-get update && apt-get install -y --no-install-recommends ndppd
+          exec ndppd -c /etc/ndppd.conf
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+              - NET_ADMIN
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ndppd.conf
+          subPath: ndppd.conf
+        - name: proc-sys
+          mountPath: /host/proc/sys
+          readOnly: false
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "killall -0 ndppd 2>/dev/null || exit 1"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+      volumes:
+      - name: config
+        configMap:
+          name: ndppd-config
+      - name: proc-sys
+        hostPath:
+          path: /proc/sys
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
