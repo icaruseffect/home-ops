@@ -1,0 +1,87 @@
+ipv4:
+  enabled: true
+ipv6:
+  enabled: true
+cluster:
+  name: homelab
+devices: enp0s25
+encryption:
+  enabled: true
+  type: wireguard
+  wireguard:
+    userspaceFallback: true
+hostFirewall:
+  enabled: false
+hubble:
+  enabled: true
+  metrics:
+    enabled:
+      - dns:query;ignoreAAAA
+      - drop
+      - tcp
+      - flow
+      - icmp
+      - http
+  relay:
+    enabled: true
+    rollOutPods: true
+    prometheus:
+      serviceMonitor:
+        enabled: true
+  ui:
+    enabled: true
+    ingress:
+      annotations:
+        cert-manager.io/cluster-issuer: ca-issuer
+        cert-manager.io/private-key-algorithm: ECDSA
+        cert-manager.io/private-key-size: "256"
+      className: cilium
+      enabled: true
+      hosts:
+        - hubble.lab.lan
+      labels: {}
+      tls:
+        - hosts:
+            - hubble.lab.lan
+          secretName: hubble.lab.lan-tls
+    rollOutPods: true
+ingressController:
+  enabled: true
+  loadbalancerMode: shared
+  service:
+    labels:
+      homelab/public-service: "true"
+    ports:
+      - name: http
+        port: 80
+        protocol: TCP
+        targetPort: 80
+      - name: https
+        port: 443
+        protocol: TCP
+        targetPort: 443
+    type: LoadBalancer
+ipam:
+  mode: cluster-pool
+  operator:
+    clusterPoolIPv4PodCIDRList: 10.0.0.0/8
+    clusterPoolIPv4MaskSize: 24
+    clusterPoolIPv6PodCIDRList:
+      - fd70:cf5e:a47b:1::/80
+    clusterPoolIPv6MaskSize: 96
+k8sServiceHost: 192.168.8.8
+k8sServicePort: 6443
+kubeProxyReplacement: true
+l2NeighDiscovery:
+  enabled: true
+l2announcements:
+  enabled: true
+operator:
+  enabled: true
+  prometheus:
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus-stack
+  replicas: 1
+  rollOutPods: true
