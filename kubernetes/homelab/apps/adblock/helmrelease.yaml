@@ -1,0 +1,27 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: adguard-home
+  namespace: adblock
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: adguard-home
+      sourceRef:
+        kind: HelmRepository
+        name: k8s-at-home
+        namespace: flux-system
+      version: "*"
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: ConfigMap
+      name: adguard-home-values
+      valuesKey: values.yaml

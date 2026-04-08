@@ -1,0 +1,12 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: adblock
+resources:
+  - helmrelease.yaml
+configMapGenerator:
+  - name: adguard-home-values
+    files:
+      - values.yaml=values-adguard-home.yaml
+    options:
+      disableNameSuffixHash: true
