@@ -1,0 +1,109 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: authentik
+  namespace: authentik
+spec:
+  chart:
+    spec:
+      chart: authentik
+      version: ">=2024.10.0 <2026.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: authentik-charts
+        namespace: flux-system
+  interval: 10m0s
+  timeout: 10m0s
+  values:
+    global:
+      image:
+        repository: ghcr.io/goauthentik/server
+        tag: 2026.2.2
+      env:
+        - name: PROXY_ADDRESS_FORWARDING
+          value: "true"
+        - name: AUTHENTIK_DEFAULT_USER_CHANGE_USERNAME
+          value: "false"
+        - name: AUTHENTIK_POSTGRESQL__USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secret-authentik
+              key: username
+        - name: AUTHENTIK_POSTGRESQL__PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret-authentik
+              key: password
+      # - name: AUTHENTIK_REDIS__PASSWORD
+      #   valueFrom:
+      #     secretKeyRef:
+      #       name: authentik-keydb-secret
+      #       key: password
+      envFrom:
+        - secretRef:
+            name: authentik-secret
+    authentik:
+      # email:
+      #   host:
+      #   port: 587
+      #   use_tls: true
+      #   use_ssl: false
+      #   from: "authentik@no-reply.${DOMAIN}"
+      postgresql:
+        host: postgres17-rw.database.svc.cluster.local
+        name: authentik
+
+      error_reporting:
+        enabled: false
+      disable_startup_analytics: true
+    server:
+      ingress:
+        enabled: true
+        ingressClassName: cilium
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-production
+        hosts:
+          - &host auth.${SECRET_DOMAIN}
+        paths:
+          - /
+        pathType: Prefix
+        tls:
+          - hosts:
+              - *host
+            secretName: auth.${SECRET_DOMAIN}-tls
+      livenessProbe:
+        timeoutSeconds: 10
+      readinessProbe:
+        timeoutSeconds: 10
+      startupProbe:
+        timeoutSeconds: 10
+        initialDelaySeconds: 60
+        failureThreshold: 15
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: 1000m
+        requests:
+          memory: 1Gi
+          cpu: 250m
+    worker:
+      livenessProbe:
+        timeoutSeconds: 10
+      readinessProbe:
+        timeoutSeconds: 10
+      startupProbe:
+        timeoutSeconds: 10
+        initialDelaySeconds: 60
+        failureThreshold: 15
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: 500m
+        requests:
+          memory: 1Gi
+          cpu: 100m
+    postgresql:
+      enabled: false
+    redis:
+      enabled: false
