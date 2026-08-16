@@ -1,0 +1,9 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - secret-rclone-s3-proxy-config.sops.yaml
+  - secret-s3-proxy-auth.sops.yaml
+  - helmrelease.yaml
