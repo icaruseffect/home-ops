@@ -29,3 +29,15 @@ spec:
     name: postgres-superuser
   monitoring:
     enablePodMonitor: true
+  managed:
+    roles:
+      - name: authentik
+        ensure: present
+        login: true
+        passwordSecret:
+          name: db-secret-authentik
+      - name: miniflux
+        ensure: present
+        login: true
+        passwordSecret:
+          name: psql-miniflux

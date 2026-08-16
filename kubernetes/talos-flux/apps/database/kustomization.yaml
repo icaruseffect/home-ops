@@ -5,5 +5,4 @@ kind: Kustomization
 resources:
   - ./namespace.yaml
   - ./cloudnative-pg/flux-sync.yaml
-  - ./dbman/flux-sync.yaml
   - ./dragonfly/flux-sync.yaml
