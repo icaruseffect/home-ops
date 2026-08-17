@@ -7,6 +7,9 @@ metadata:
   namespace: cloud
 spec:
   interval: 30m
+  # init-permissions chowns the whole nextcloud data volume; on this
+  # large dataset it alone takes ~9-11m, past Flux's 5m default timeout
+  timeout: 15m
   chart:
     spec:
       chart: nextcloud

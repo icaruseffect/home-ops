@@ -6,3 +6,4 @@ resources:
   - ./namespace.yaml
   - ./nextcloud/flux-sync.yaml
   - ./nextcloud/database-nextcloud.yaml
+  - ./nextcloud/database-nextcloud-postgres17.yaml

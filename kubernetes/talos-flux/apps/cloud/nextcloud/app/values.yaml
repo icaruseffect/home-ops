@@ -74,8 +74,7 @@ ingress:
 
 # Allow configuration of lifecycle hooks
 # ref: https://kubernetes.io/docs/tasks/configure-pod-container/attach-handler-lifecycle-event/
-lifecycle:
-  {}
+lifecycle: {}
   # postStartCommand: []
   # preStopCommand: []
 
@@ -386,7 +385,7 @@ externalDatabase:
   type: postgresql
 
   ## Database host. You can optionally include a colon delimited port like "myhost:1234"
-  host: "postgres15-rw.database.svc.cluster.local:5432"
+  host: "postgres17-rw.database.svc.cluster.local:5432"
 
   ## Database user
   user: ""
@@ -425,8 +424,7 @@ cronjob:
 
   # Allow configuration of lifecycle hooks
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/attach-handler-lifecycle-event/
-  lifecycle:
-    {}
+  lifecycle: {}
     # postStartCommand: []
     # preStopCommand: []
   # Set securityContext parameters. For example, you may need to define runAsNonRoot directive
@@ -481,8 +479,7 @@ persistence:
     accessMode: ReadWriteOnce
     size: 8Gi
 
-resources:
-  {}
+resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
   # resources, such as Minikube. If you do want to specify resources, uncomment the following
