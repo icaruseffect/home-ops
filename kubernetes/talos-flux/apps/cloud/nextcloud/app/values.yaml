@@ -193,7 +193,10 @@ nextcloud:
 
   ## PHP Configuration files
   # Will be injected in /usr/local/etc/php/conf.d for apache image and in /usr/local/etc/php-fpm.d when nginx.enabled: true
-  phpConfigs: {}
+  phpConfigs:
+    zzz-perf.ini: |
+      ; files don't change at runtime; skip the per-request stat() check
+      opcache.validate_timestamps=0
   ## Default config files that utilize environment variables:
   # see: https://github.com/nextcloud/docker/tree/master#auto-configuration-via-environment-variables
   # IMPORTANT: Will be used only if you put extra configs, otherwise default will come from nextcloud itself
@@ -234,6 +237,11 @@ nextcloud:
     post-installation:
     pre-upgrade:
     post-upgrade:
+    # before-starting.servername.sh is disabled: hook scripts run as
+    # www-data, which cannot write to the root-owned
+    # /etc/apache2/conf-enabled/ dir. It only suppressed a cosmetic
+    # Apache "could not determine ServerName" warning; OVERWRITEHOST
+    # (in extraEnv below) already covers the functional need.
     before-starting:
 
   ## Strategy used to replace old pods
@@ -479,17 +487,20 @@ persistence:
     accessMode: ReadWriteOnce
     size: 8Gi
 
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #  cpu: 100m
-  #  memory: 128Mi
-  # requests:
-  #  cpu: 100m
-  #  memory: 128Mi
+# BestEffort QoS (no requests/limits) left nextcloud first in line for
+# CPU starvation on this overcommitted single-node cluster, which made
+# the liveness probe time out under normal concurrent CalDAV load and
+# kubelet SIGKILL an otherwise-healthy container. The 1500m cap itself
+# then throttled PHP mid-request (opcache/JIT compilation, DI bootstrap)
+# and showed up as slow page loads instead - node has request-level
+# headroom, so give it real burst room rather than a tight limit.
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 3000m
+    memory: 1Gi
 
 ## Liveness and readiness probe values
 ## Ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -497,22 +508,22 @@ resources: {}
 livenessProbe:
   enabled: true
   initialDelaySeconds: 10
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
+  periodSeconds: 15
+  timeoutSeconds: 10
+  failureThreshold: 5
   successThreshold: 1
 readinessProbe:
   enabled: true
   initialDelaySeconds: 10
   periodSeconds: 10
-  timeoutSeconds: 5
+  timeoutSeconds: 10
   failureThreshold: 3
   successThreshold: 1
 startupProbe:
   enabled: true
   initialDelaySeconds: 30
   periodSeconds: 10
-  timeoutSeconds: 5
+  timeoutSeconds: 10
   failureThreshold: 30
   successThreshold: 1
 
