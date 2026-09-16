@@ -1,0 +1,239 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/cert-manager.io/certificate_v1.json
+# Per-host certificates for the cilium-gateway listeners. One Certificate per
+# host so a single failing ACME challenge cannot block renewal of the others.
+# Hostnames use \${SECRET_DOMAIN}; substitute manually when kubectl-applying
+# (kustomize-controller is scaled to 0).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-auth.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-auth.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - auth.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-alertmanager.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-alertmanager.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - alertmanager.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-prometheus.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-prometheus.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - prometheus.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-books.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-books.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - books.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-cloud.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-cloud.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - cloud.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - ${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-flux-webhook.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-flux-webhook.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - flux-webhook.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-hoarder.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-hoarder.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - hoarder.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-mail.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-mail.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - mail.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-ntfy.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-ntfy.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - ntfy.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-grafana.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-grafana.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - grafana.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-pushgateway.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-pushgateway.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - pushgateway.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-chat.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-chat.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - chat.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-push.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-push.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - push.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-reader.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-reader.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - reader.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-termine.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-termine.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - termine.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-velo.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-velo.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - velo.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-velo-gui.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-velo-gui.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - velo-gui.${SECRET_DOMAIN}

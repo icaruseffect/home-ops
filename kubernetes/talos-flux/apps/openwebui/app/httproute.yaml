@@ -1,0 +1,29 @@
+---
+# Raw HTTPRoute for open-webui: the chart supports `route` but the release is
+# stuck in UpgradeFailed (pre-existing pipelines/StatefulSet immutable-field
+# errors), so the rendered route never materializes. This hand-applied route
+# owns chat.${SECRET_DOMAIN} behind cilium-gateway instead; delete it if the HR
+# ever reconciles cleanly with `route.enabled: true` in its values.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: open-webui
+  namespace: open-webui
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: https-chat.${SECRET_DOMAIN}
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: http
+  hostnames:
+    - chat.${SECRET_DOMAIN}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: open-webui
+          port: 80

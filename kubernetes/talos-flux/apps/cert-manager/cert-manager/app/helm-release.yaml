@@ -4,6 +4,7 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: cert-manager
+  namespace: cert-manager
 spec:
   interval: 30m
   chart:
@@ -24,6 +25,15 @@ spec:
     remediation:
       retries: 5
   values:
+    # Gateway API shim controller (cert-manager 1.15: config requires apiVersion/kind;
+    # the gateway controller is behind the ExperimentalGatewayAPISupport feature gate)
+    config:
+      apiVersion: controller.config.cert-manager.io/v1alpha1
+      kind: ControllerConfiguration
+      featureGates:
+        ExperimentalGatewayAPISupport: true
+      # separate from the feature gate; defaults false even in 1.15
+      enableGatewayAPI: true
     # https://artifacthub.io/packages/helm/cert-manager/cert-manager?modal=values
     installCRDs: true
     extraArgs:

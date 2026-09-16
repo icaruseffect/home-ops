@@ -6,7 +6,7 @@ namespace: flux-system
 resources:
   - ./webhook-token.sops.yaml
   - ./receiver.yaml
-  - ./ingress.yaml
+  - ./httproute.yaml
 commonLabels:
   app.kubernetes.io/name: webhook-receiver
   app.kubernetes.io/instance: webhook-receiver

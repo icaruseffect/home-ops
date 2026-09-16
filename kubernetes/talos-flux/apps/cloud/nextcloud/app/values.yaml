@@ -21,11 +21,37 @@ deploymentLabels: {}
 # Number of replicas to be deployed
 replicaCount: 1
 
+# Gateway API HTTPRoute (chart renders it alongside the Ingress until cutover)
+httpRoute:
+  enabled: true
+  hostnames:
+    - cloud.${SECRET_DOMAIN}
+  parentRefs:
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: https-cloud.${SECRET_DOMAIN}
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: http
+  wellKnown:
+    enabled: true
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Forwarded-Host
+                value: cloud.${SECRET_DOMAIN}
+
 ## Allowing use of ingress controllers
 ## ref: https://kubernetes.io/docs/concepts/services-networking/ingress/
 ##
 ingress:
-  enabled: true
+  enabled: false
   className: cilium
   annotations:
     ingress.cilium.io/force-https: disabled

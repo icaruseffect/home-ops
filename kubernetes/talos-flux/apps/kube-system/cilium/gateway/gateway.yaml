@@ -1,0 +1,220 @@
+---
+# Cilium Gateway terminating TLS for all exposed hosts. One HTTPS listener
+# per host (SNI) so each host's certificate renews independently; the
+# certificates live in certificates.yaml next to this file. The `http`
+# listener carries plain HTTP for every host (matches the old Ingress
+# behavior with ingress.cilium.io/force-https: disabled).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cilium-gateway
+  namespace: kube-system
+  labels:
+    cilium.io/gateway: "true"
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https-auth.${SECRET_DOMAIN}
+      hostname: auth.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-auth.${SECRET_DOMAIN}-tls
+    - name: https-alertmanager.${SECRET_DOMAIN}
+      hostname: alertmanager.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-alertmanager.${SECRET_DOMAIN}-tls
+    - name: https-prometheus.${SECRET_DOMAIN}
+      hostname: prometheus.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-prometheus.${SECRET_DOMAIN}-tls
+    - name: https-books.${SECRET_DOMAIN}
+      hostname: books.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-books.${SECRET_DOMAIN}-tls
+    - name: https-cloud.${SECRET_DOMAIN}
+      hostname: cloud.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-cloud.${SECRET_DOMAIN}-tls
+    - name: https-${SECRET_DOMAIN}
+      hostname: ${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-${SECRET_DOMAIN}-tls
+    - name: https-flux-webhook.${SECRET_DOMAIN}
+      hostname: flux-webhook.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-flux-webhook.${SECRET_DOMAIN}-tls
+    - name: https-hoarder.${SECRET_DOMAIN}
+      hostname: hoarder.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-hoarder.${SECRET_DOMAIN}-tls
+    - name: https-mail.${SECRET_DOMAIN}
+      hostname: mail.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-mail.${SECRET_DOMAIN}-tls
+    - name: https-ntfy.${SECRET_DOMAIN}
+      hostname: ntfy.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-ntfy.${SECRET_DOMAIN}-tls
+    - name: https-grafana.${SECRET_DOMAIN}
+      hostname: grafana.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-grafana.${SECRET_DOMAIN}-tls
+    - name: https-pushgateway.${SECRET_DOMAIN}
+      hostname: pushgateway.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-pushgateway.${SECRET_DOMAIN}-tls
+    - name: https-chat.${SECRET_DOMAIN}
+      hostname: chat.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-chat.${SECRET_DOMAIN}-tls
+    - name: https-push.${SECRET_DOMAIN}
+      hostname: push.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-push.${SECRET_DOMAIN}-tls
+    - name: https-reader.${SECRET_DOMAIN}
+      hostname: reader.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-reader.${SECRET_DOMAIN}-tls
+    - name: https-termine.${SECRET_DOMAIN}
+      hostname: termine.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-termine.${SECRET_DOMAIN}-tls
+    - name: https-velo.${SECRET_DOMAIN}
+      hostname: velo.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-velo.${SECRET_DOMAIN}-tls
+    - name: https-velo-gui.${SECRET_DOMAIN}
+      hostname: velo-gui.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-velo-gui.${SECRET_DOMAIN}-tls

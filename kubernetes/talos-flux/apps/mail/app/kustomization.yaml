@@ -5,6 +5,7 @@ kind: Kustomization
 namespace: mail
 resources:
   - helm-release.yaml
+  - httproute.yaml
 configMapGenerator:
   - name: values-stalwart-mail
     namespace: mail

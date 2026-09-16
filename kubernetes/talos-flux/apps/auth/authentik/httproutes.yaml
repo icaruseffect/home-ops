@@ -1,0 +1,55 @@
+---
+# Orphaned goauthentik outpost routes. authentik (server) is suspended and
+# scaled to 0 after the authelia migration; these two Ingresses were left
+# behind by the outpost integration. The HTTPRoutes keep the hosts working
+# against the same outposts Services. If authentik is ever revived or the
+# outposts re-parented, edit these routes then.
+# alertmanager.${SECRET_DOMAIN}'s backend currently has NO endpoints (503) —
+# pre-existing breakage, out of scope.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ak-outpost-authentik-embedded-outpost
+  namespace: authentik
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: https-alertmanager.${SECRET_DOMAIN}
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: http
+  hostnames:
+    - alertmanager.${SECRET_DOMAIN}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: ak-outpost-authentik-embedded-outpost
+          port: 9000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ak-outpost-prometheus-outpost
+  namespace: authentik
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: https-prometheus.${SECRET_DOMAIN}
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: http
+  hostnames:
+    - prometheus.${SECRET_DOMAIN}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: ak-outpost-prometheus-outpost
+          port: 9000

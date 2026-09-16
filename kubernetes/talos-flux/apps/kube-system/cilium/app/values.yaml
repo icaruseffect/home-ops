@@ -32,28 +32,13 @@ hubble:
       - icmp
       - http
 
-ingressController:
+gatewayAPI:
   enabled: true
-  default: true
-  loadbalancerMode: shared
-  defaultSecretNamespace: cert-manager
-  enforceHttps: false
-  service:
-    labels:
-      homelab/public-service: "true"
-    annotations:
-      lbipam.cilium.io/sharing-key: "sharedexternal"
-      lbipam.cilium.io/sharing-cross-namespace: "mail"
-    type: LoadBalancer
-    ports:
-      - name: http
-        port: 80
-        protocol: TCP
-        targetPort: 80
-      - name: https
-        port: 443
-        protocol: TCP
-        targetPort: 443
+  hostNetwork:
+    enabled: true
+    nodes:
+      matchLabels:
+        kubernetes.io/hostname: contabo-de-1
 
 ipam:
   mode: kubernetes

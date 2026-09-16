@@ -1,0 +1,11 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # The Gateway object lives in gateway.yaml; certificates.yaml holds the
+  # per-host ACME certificates. Everything else in this directory
+  # (gatewayapi.yaml CRDs, cilium-l2-announcement-gateway.yaml) is dead and
+  # deliberately not applied.
+  - ./certificates.yaml
+  - ./gateway.yaml

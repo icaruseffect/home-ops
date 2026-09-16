@@ -5,6 +5,7 @@ kind: Kustomization
 namespace: push
 resources:
   - helm-release.yaml
+  - httproute.yaml
 configMapGenerator:
   - name: values-mollysocket
     namespace: cloud
