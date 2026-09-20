@@ -1,0 +1,24 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: paperless
+resources:
+  - helm-repo.yaml
+  - helm-release.yaml
+  - secret-paperless-auth.yaml
+  # - secret-paperless-db.yaml
+  - secret-paperless.yaml
+  - scrapeconfig-celery-flower.yaml
+
+configMapGenerator:
+  - name: paperless-ngx-values
+    files:
+      - values-paperless-ngx.yaml
+    options:
+      disableNameSuffixHash: true
+  - name: paperless-post-consume-script
+    files:
+      - post-consume.sh
+    options:
+      disableNameSuffixHash: true

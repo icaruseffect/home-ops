@@ -1,0 +1,19 @@
+---
+# The harbor role/database were created manually via `kubectl exec ... psql` because
+# this cluster's CNPG operator does not have the Database CRD reconciler registered
+# (same limitation as talos-flux and the rest of this cluster, verified via
+# controller-manager startup logs -- only cluster/backup/scheduled-backup/database-role/
+# pooler/plugin controllers start). This CR is declarative documentation only, kept in
+# case the reconciler is ever enabled. Consumed cross-namespace by harbor (harbor
+# namespace) via the harbor-db secret in that app's own directory.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: harbor-database
+  namespace: paperless
+spec:
+  cluster:
+    name: paperless-postgres-db
+  name: harbor
+  owner: harbor
+  ensure: present

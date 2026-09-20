@@ -1,0 +1,31 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: paperless-postgres-restore
+  namespace: paperless
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+  postgresUID: 26
+  postgresGID: 26
+  enableSuperuserAccess: false
+  storage:
+    size: 8Gi
+    ##  Use Default pvc
+    # pvcTemplate:
+    #   storageClassName: openebs-hostpath
+
+  bootstrap:
+    recovery:
+      source: paperless-origin
+
+  externalClusters:
+    - name: paperless-origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: paperless-backup-store
+          # MUST match the original cluster's name — this is the
+          # directory inside the store, not the new cluster's name
+          serverName: paperless-postgres-db

@@ -1,0 +1,41 @@
+# The `fmjstudios` org was renamed to `adnoctem`, and the chart repo later
+# moved from `adnoctem/helm` to `adnoctem/charts`. Both old GitHub Pages
+# indexes are gone (https://adnoctem.github.io/helm/index.yaml 404s), which is
+# why source-controller can no longer resolve the chart. Same chart, new home.
+#
+#   helm repo add adnoctem https://adnoctem.github.io/charts
+#
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/source.toolkit.fluxcd.io/helmrepository_v1.json
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: adnoctem-charts
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://adnoctem.github.io/charts
+
+# --- Alternative: OCI ------------------------------------------------------
+# Since this outage was caused by a GitHub Pages index disappearing, the OCI
+# path is materially more durable. Verify the tag exists first:
+#   crane ls ghcr.io/adnoctem/helm/paperless-ngx
+# then replace the object above with:
+#
+# ---
+# apiVersion: source.toolkit.fluxcd.io/v1
+# kind: HelmRepository
+# metadata:
+#   name: adnoctem-charts
+#   namespace: flux-system
+# spec:
+#   type: oci
+#   interval: 12h
+#   url: oci://ghcr.io/adnoctem/charts
+#
+# Better still: mirror the chart into your own Harbor and point at that, so a
+# third-party registry change can't stall reconciliation again.
+
+# --- Cleanup ---------------------------------------------------------------
+# Delete the old source once this reconciles:
+#   kubectl -n flux-system delete helmrepository fmjstudios-charts

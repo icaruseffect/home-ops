@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: paperless-ngx
+  namespace: paperless
+spec:
+  interval: 15m
+  chart:
+    spec:
+      chart: paperless-ngx
+      version: "0.4.2"
+      sourceRef:
+        kind: HelmRepository
+        name: adnoctem-charts
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    timeout: 10m
+    remediation:
+      retries: 2
+      remediateLastFailure: true
+    cleanupOnFail: true
+  values:
+    image:
+      tag: "3.2.0"
+  valuesFrom:
+    - kind: ConfigMap
+      name: paperless-ngx-values
+      valuesKey: values-paperless-ngx.yaml
+  # Flower crash fix: paperless-ngx 3.2.0's s6 svc-flower unconditionally passes
+  # --conf=${PAPERLESS_SRC_DIR}/paperless/flowerconfig.py and flower >= 2.1.0
+  # exits with FileNotFoundError when the image does not ship one (it does not).
+  # Upstream fix (paperless-ngx#14182, merged 2026-09-20) is not in a release yet;
+  # mount an empty config file instead. Drop this patch once the fixed image ships.
+  #
+  # Kubernetes probes connect to the pod IP, so Django sees Host: 10.0.0.x:8000
+  # and CommonMiddleware rejects it with a 400 - which the kubelet counts as a
+  # probe failure. ALLOWED_HOSTS cannot express a CIDR, so send a Host header
+  # the existing allowlist already accepts.
+  #
+  # Strategic merge, not JSON6902: it merges by container name and does not
+  # require the target path to pre-exist.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: apps
+              version: v1
+              kind: StatefulSet
+              name: paperless-ngx
+            patch: |
+              apiVersion: apps/v1
+              kind: StatefulSet
+              metadata:
+                name: paperless-ngx
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: paperless-ngx
+                        startupProbe:
+                          httpGet:
+                            httpHeaders:
+                              - name: Host
+                                value: paperless.lab.lan
+                        readinessProbe:
+                          httpGet:
+                            httpHeaders:
+                              - name: Host
+                                value: paperless.lab.lan
+                        volumeMounts:
+                          - name: flowerconfig
+                            mountPath: /usr/src/paperless/src/paperless/flowerconfig.py
+                            subPath: flowerconfig.py
+                            readOnly: true
+                    volumes:
+                      - name: flowerconfig
+                        configMap:
+                          name: paperless-flowerconfig

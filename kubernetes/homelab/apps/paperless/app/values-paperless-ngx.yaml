@@ -1,936 +1,352 @@
-# Default Helm values for fmjstudios/paperless-ngx.
-# Reference: https://github.com/fmjstudios/helm
-
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
-
-# yamllint disable rule:line-length
-
-## @section Image parameters
-##
-
-## Paperless-NGX Image
-## ref: https://github.com/paperless-ngx/paperless-ngx/pkgs/container/paperless-ngx
-## @param image.registry The Docker registry to pull the image from
-## @param image.repository The registry repository to pull the image from
-## @param image.tag The image tag to pull
-#paperless-ngx-data-pvc# @param image.digest The image digest to pull
-## @param image.pullPolicy The Kubernetes image pull policy
-## @param image.pullSecrets A list of secrets to use for pulling images from private registries
 ---
+# Helm values for adnoctem/paperless-ngx
+#   repo:  https://adnoctem.github.io/helm   (formerly fmjstudios)
+#   chart: paperless-ngx 0.3.1
+#
+# Consumed by the configMapGenerator in kustomization.yaml as
+# ConfigMap/paperless-ngx-values, key values-paperless-ngx.yaml.
+#
+# Built from the upstream 0.3.1 defaults with local overrides merged in - do not
+# trim unset keys. Several templates dereference values without an `if` guard,
+# so a missing key renders an empty env var into the ConfigMap rather than being
+# omitted (paperless.cron.* is the worst offender; see the note there).
+# --- Image -----------------------------------------------------------------
+# CORRECTED: 2.20.10 - taken from the running pod, NOT the chart's appVersion.
+# The chart still declares appVersion 2.10.1, so leaving image.tag empty here
+# would downgrade you ten minor versions across paperless's forward-only
+# migration chain. Pin it, and drive it with Flux image automation
+# ($imagepolicy marker) rather than by editing the StatefulSet by hand.
 image:
   registry: ghcr.io
   repository: paperless-ngx/paperless-ngx
-  # tag: "2.16.1"
+  tag: "2.20.10"
   digest: ""
-  ## Specify a imagePullPolicy
-  ## Defaults to 'Always' if image tag is 'latest', else set to 'IfNotPresent'
-  ## ref: https://kubernetes.io/docs/user-guide/images/#pre-pulling-images
-  ##
   pullPolicy: IfNotPresent
-  ## Optionally specify an array of imagePullSecrets.
-  ## Secrets must be manually created in the namespace.
-  ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
-  ## e.g:
-  ## pullSecrets:
-  ##   - myRegistryKeySecretName
-  ##
   pullSecrets: []
-
-## @section Name overrides
-##
-
-## @param nameOverride String to partially override paperless.fullname
-##
 nameOverride: ""
-
-## @param fullnameOverride String to fully override paperless.fullname
-##
 fullnameOverride: ""
-
-## @section Paperless Configuration parameters
-##
-
-## Paperless configuration
-## ref: https://docs.paperless-ngx.com/configuration/
 paperless:
-  ## @param paperless.domain [string] Define the domain name for Paperless - will be re-used in Ingress
-  ##
-  domain: "paperless.lab.lan"
-  ## @param paperless.appTitle [string] If set, overrides the default name "Paperless-ngx"
-  ##
+  domain: paperless.lab.lan
   appTitle: ""
-  ## @param paperless.appLogo [string] Path to an image file in the `/media/logo` directory, must include 'logo', e.g. `/logo/Atari_logo.svg`
-  ##
   appLogo: ""
-
-  ## Secret Key settings
-  ##
+  # unchanged: existingSecret wins; `value` cleared so a stray edit can't turn
+  # the literal string "paperless" into your Django SECRET_KEY
   secretKey:
-    ## @param paperless.secretKey.value [string] Define a custom secret key for Paperless
-    ##
-    value: "paperless"
-    ## Existing Secret settings
-    ##
+    value: ""
     existingSecret:
-      ## @param paperless.secretKey.existingSecret.name [string] Define the name of an existing Secret containing the secret key
-      ##
-      name: "paperless"
-      ## @param paperless.secretKey.existingSecret.key [string] Define the key within the existing Secret containing the secret key
-      ##
-      key: "PAPERLESS_SECRET_KEY"
-  ## @param paperless.address [default: "::"] The address Paperless should bind to
-  ##
-  address: "0.0.0.0"
-  ## @param paperless.port [default: 8000] The port Paperless should bind to
-  ##
+      name: paperless
+      key: PAPERLESS_SECRET_KEY
+  address: 0.0.0.0
   port: 8000
-  ## @param paperless.uid [default: 1000] The user ID Paperless should use
-  ##
   uid: 1000
-  ## @param paperless.gid [default: 1000] The group ID Paperless should use
-  ##
   gid: 1000
-  ## @param paperless.enableFlower [default: false] Enable the 'Flower' monitoring tool for 'Celery' (Paperless' task queue)
-  ## ref: https://flower.readthedocs.io/en/latest/index.html
-  ##
   enableFlower: true
-  ## @param paperless.webserverWorkers [default: 1] The amount of Nginx worker processes to spawn for the server within the container
-  ##
   webserverWorkers: 2
-  ## @param paperless.taskWorkers [string] The amount for task worker processes to spawn within the container
-  ##
-  ##
   taskWorkers: "2"
-  ## @param paperless.threadsPerWorker [string] The amount of threads to assign each task worker process within the container
-  ##
   threadsPerWorker: "2"
-  ## @param paperless.workerTimeout [string] The amount of threads to assign each task worker process within the container
-  ##
   workerTimeout: ""
-  ## @param paperless.timeZone [default: UTC] Set the time zone here
-  ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_TIME_ZONE
-  ##
   timeZone: Europe/Berlin
-  ## @param paperless.enableNLTK [string] Enables or disables the advanced natural language processing used during
-  ## automatic classification. If disabled, paperless will still perform some basic text pre-processing before matching.
-  ##
   enableNLTK: ""
-  ## @param paperless.enableAuditLog [default: true] Enables the audit trail for documents, document types, correspondents, and tags
-  ##
   enableAuditLog: true
-  ## @param paperless.enableCompression [default: "1"] Enables compression of the responses from the webserver. Defaults to 1, enabling compression.
-  ##
   enableCompression: "1"
-  ## @param paperless.apps [string] A comma-separated list of Django apps to be included in Django's INSTALLED_APPS
-  ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_APPS
-  ##
-  apps: "allauth.socialaccount.providers.openid_connect"
-  ## @param paperless.maxImagePixels [string] Configures the maximum size of an image PIL will allow to load without warning or error
-  ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_MAX_IMAGE_PIXELS
-  ##
+  apps: allauth.socialaccount.providers.openid_connect
   maxImagePixels: ""
-  ## @param paperless.emptyTrashDelay [default: 30] Sets how long in days documents remain in the 'trash' before they are permanently deleted
-  ## ref: https://docs.paperless-ngx.com/configuration/#EMPTY_TRASH_DELAY
-  ##
   emptyTrashDelay: ""
-
-  ## Authentication configuration
-  ##
   auth:
-    ## @param paperless.auth.autoLoginUsername [string] Specify a username so that paperless will automatically perform login with the selected user
-    ##
     autoLoginUsername: ""
-    ## @param paperless.auth.adminUser [string] If this environment variable is specified, Paperless automatically creates a superuser with the provided username at start
-    ##
     adminUser: ""
-    ## @param paperless.auth.adminPassword [string] Only used when PAPERLESS_ADMIN_USER is set. This will be the password of the automatically created superuser
-    ##
     adminPassword: ""
-    ## @param paperless.auth.existingSecret [string] Specify an existing secret with a `username` and `password` key
-    ##
     existingSecret: ""
-    ## @param paperless.auth.adminMail [string]  Specify superuser email address. Only used when PAPERLESS_ADMIN_USER is set
-    ##
     adminMail: ""
-    ## @param paperless.auth.allowSignups [string] Allow users to sign up for a new Paperless-ngx account
-    ##
     allowSignups: ""
-    ## @param paperless.auth.disableRegularLogin [default: false] Disables the regular frontend username / password login, i.e. once you have setup SSO
-    ##
     disableRegularLogin: false
-    ## @param paperless.auth.sessionRemember [string] Controls the lifetime of the session. `None`, `False` or `True`
-    ## ref: https://docs.allauth.org/en/latest/account/configuration.html
-    ##
     sessionRemember: None
-    ## @param paperless.auth.defaultHTTPProtocol [string] The protocol used when generating URLs, e.g. login callback URLs
-    ##
     defaultHTTPProtocol: https
-    ## @param paperless.auth.emailVerification [string] Determines whether email addresses are verified during signup (as performed by Django allauth)
-    ##
     emailVerification: optional
-
-    ## Social (Django AllAuth) Authentication Configuration
-    ##
     social:
-      ## @param paperless.auth.social.accountProviders [string] This variable is used to set up login and signup via social account providers which are compatible with django-allauth.
-      ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_SOCIALACCOUNT_PROVIDERS
-      ##
-      accountProviders: "openid_connect"
-      ## @param paperless.auth.social.existingSecret [string] The name of existing secret containing a `accountProviders` key to configure Django AllAuth
-      ##
-      existingSecret: "paperless-auth"
-      ## @param paperless.auth.social.allowSignups [default: false] Allow users to signup for a new Paperless-ngx account using any setup third party authentication systems
-      ##
+      accountProviders: openid_connect
+      existingSecret: paperless-auth
       allowSignups: true
-      ## @param paperless.auth.social.autoSignup [default: false] Attempt to sign up the user using retrieved email, username etc from the third party authentication system
-      ##
       autoSignup: true
-
-  ## Hosting configuration
-  ##
+  # CHANGED: allowedHosts had paperless-ngx.paperless.svc.cluster.local twice
   hosting:
-    ## @param paperless.hosting.trustedOrigins [string] A list of trusted origins for unsafe requests (e.g. POST). As of Django 4.0 this is required to access the Django admin via the web
-    ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_CSRF_TRUSTED_ORIGINS
-    ##
-    trustedOrigins: "https://paperless.lab.lan, http://paperless-ngx:8000, http://paperless-ngx.paperless.svc.cluster.local"
-    ## @param paperless.hosting.allowedHosts [string] If you're planning on putting Paperless on the open internet, then you really should set this value to the domain name you're using
-    ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_ALLOWED_HOSTS
-    ##
-    allowedHosts: "paperless.lab.lan, paperless-ngx.paperless.svc.cluster.local:8000, paperless-ngx.paperless.svc.cluster.local, paperless-ngx, paperless-ngx:8000"
-    ## @param paperless.hosting.corsAllowedHosts [string] You need to add your servers to the list of allowed hosts that can do CORS calls. Set this to your public domain name
-    ##
+    trustedOrigins: https://paperless.lab.lan,http://paperless-ngx:8000,http://paperless-ngx.paperless.svc.cluster.local
+    allowedHosts: paperless.lab.lan,paperless-ngx,paperless-ngx.paperless.svc.cluster.local
     corsAllowedHosts: ""
-    ## @param paperless.hosting.trustedProxies [string] This may be needed to prevent IP address spoofing if you are using e.g. fail2ban with log entries for failed authorization attempts
-    ##
     trustedProxies: ""
-    ## @param paperless.hosting.forceScriptName [string] To host paperless under a subpath URL like example.com/paperless you set this value to /paperless. No trailing slash!
-    ##
     forceScriptName: ""
-    ## @param paperless.hosting.staticURL [string] Unless you're hosting Paperless off a subdomain like /paperless/, you probably don't need to change this
-    ##
     staticURL: ""
-    ## @param paperless.hosting.cookiePrefix [string] Specify a prefix that is added to the cookies used by paperless to identify the currently logged in user
-    ##
     cookiePrefix: ""
-    ## @param paperless.hosting.enableHTTPRemoteUser [default: false] Allows authentication via HTTP_REMOTE_USER which is used by some SSO applications
-    ##
     enableHTTPRemoteUser: false
-    ## @param paperless.hosting.enableHTTPRemoteUserAPI [default: false] AAllows authentication via HTTP_REMOTE_USER directly against the API
-    ##
     enableHTTPRemoteUserAPI: false
-    ## @param paperless.hosting.HTTPRemoteUserHeaderName [string] If "PAPERLESS_ENABLE_HTTP_REMOTE_USER" or PAPERLESS_ENABLE_HTTP_REMOTE_USER_API are enabled, this property allows to customize the name of the HTTP header from which the authenticated username is extracted
-    ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME
-    ##
     HTTPRemoteUserHeaderName: ""
-    ## @param paperless.hosting.logoutRedirectURL [string] URL to redirect the user to after a logout
-    ##
     logoutRedirectURL: ""
-    ## @param paperless.hosting.useXForwardHost [default: false] Configures the Django setting USE_X_FORWARDED_HOST which may be needed for hosting behind a proxy
-    ##
     useXForwardHost: true
-    ## @param paperless.hosting.useXForwardPort [default: false] Configures the Django setting USE_X_FORWARDED_PORT which may be needed for hosting behind a proxy
-    ##
     useXForwardPort: false
-    ## @param paperless.hosting.proxySSLHeader [string] Configures the Django setting SECURE_PROXY_SSL_HEADER which may be needed for hosting behind a proxy
-    ##
     proxySSLHeader: ""
-
-  ## Cron configuration
-  ##
+  # DO NOT DELETE THIS BLOCK. The chart emits each cron env var only when the
+  # value differs from a hardcoded sentinel, and it dereferences these keys
+  # unguarded - removing them renders empty cron strings into the ConfigMap.
+  # As set, every entry equals its sentinel (or paperless's own default), so
+  # nothing is emitted except PAPERLESS_INDEX_TASK_CRON. Effectively inert.
   cron:
-    ## @param paperless.cron.emailTask [default: "*/10 * * * *"] Configures the scheduled email fetching frequency. The value should be a valid crontab(5) expression describing when to run.
-    ## If set to the string "disable", no emails will be fetched automatically. Defaults to `*/10 * * * *` or every ten minutes.
-    ##
     emailTask: "*/10 * * * *"
-    ## @param paperless.cron.trainTask [default: "5 */1 * * *"] Configures the scheduled automatic classifier training frequency. May also be "disabled".
-    ## Defaults to `5 */1 * * *` or every hour at 5 minutes past the hour.
-    ##
-    trainTask: "5 */1 * * *"
-    ## @param paperless.cron.indexTask [default: "0 0 * * *"] Configures the scheduled search index update frequency. May also be "disabled".
-    ## Defaults to `0 0 * * *` or daily at midnight.
-    ##
-    indexTask: "0 0 * * *"
-    ## @param paperless.cron.sanityTask [default: "30 0 * *"] Configures the scheduled sanity checker frequency. May also be "disabled".
-    ## Defaults to `30 0 * *` sun or Sunday at 30 minutes past midnight.
-    ##
-    sanityTask: "30 0 * *"
-    ## @param paperless.cron.emptyTrashTask [default: "0 1 * * *"] Configures the schedule to empty the trash of expired deleted documents
-    ## Defaults to `0 1 * * *`, once per day.
-    ##
-    emptyTrashTask: "30 0 * *"
-
-  ## Redis configuration
-  ##
+    trainTask: 5 */1 * * *
+    indexTask: 0 0 * * *
+    sanityTask: 30 0 * *
+    emptyTrashTask: 30 0 * *
   redis:
-    ## @param paperless.redis.host [string] Specify a custom hostname for the Redis instance.
-    ## NOTE: By default a generated value based on the release name will be used (e.g.: my_release-redis-master)
-    ##
     host: ""
-    ## @param paperless.redis.port [default: 6379] The port for the Redis instance
-    ##
     port: 6379
-    ## @param paperless.redis.username [string] The username for the Redis instance
-    ##
     username: ""
-    ## @param paperless.redis.password [string] The password for the Redis instance
-    ##
     password: paperless
-    ## @param paperless.redis.existingSecret [string] The name of an existing Secret with a `uri` key containing the full Redis URI
-    ## NOTE: since you provide a custom URI with an existing Secret the previous properties are entirely ignored
-    ##
     existingSecret: ""
-    ## @param paperless.redis.prefix [string]
-    ##
     prefix: ""
-
-  ## PostgreSQL configuration
-  ##
+  # CHANGED: use the CNPG-managed secret instead of plaintext credentials.
+  # The chart reads keys `username` and `password`; `paperless-db` is
+  # type kubernetes.io/basic-auth, so it is drop-in compatible.
+  # VERIFY BEFORE APPLYING (see notes) - a mismatch breaks DB auth.
+  # Helm will delete the now-untemplated `paperless-ngx-postgresql-auth`.
   postgresql:
-    ## @param paperless.postgresql.host [string] Specify a custom hostname for the PostgreSQL database
-    ## NOTE: By default a generated value based on the release name will be used (e.g.: my_release-postgresql)
-    ##
-    host: "paperless-postgres-db-rw"
-    ## @param paperless.postgresql.port [default: 5432] The port for the PostgreSQL database
-    ##
+    host: paperless-postgres-db-rw
     port: 5432
-    ## @param paperless.postgresql.name [string] The database name for the PostgreSQL database
-    ##
     name: paperless
-    ## @param paperless.postgresql.user [string] The username for the PostgreSQL database
-    ##
-    user: paperless
-    ## @param paperless.postgresql.password [string] The password for the PostgreSQL database
-    ##
-    password: paperless
-    ## @param paperless.postgresql.existingSecret [string] An existing BasicAuth secret containing the PostgreSQL credentials
-    ##
-    existingSecret: ""
-    ## @param paperless.postgresql.sslMode [default: prefer] The SSL Mode for the PostgreSQL database
-    ##
-    sslMode: "prefer"
-    ## @param paperless.postgresql.timeout [string] Define a timeout for the database connection
-    ##
-    timeout: ""
-
-    ## PostgreSQL certificates configuration
-    ##
-    certs:
-      ## @param paperless.postgresql.certs.rootCert [string] The path to a mounted TLS root certificate
-      ##
-      rootCert: ""
-      ## @param paperless.postgresql.certs.cert [string] The path to a mounted TLS certificate
-      ##
-      cert: ""
-      ## @param paperless.postgresql.certs.key [string] The path to a mounted TLS certificate key
-      ##
-      key: ""
-
-  ## Tika configuration
-  ##
-  tika:
-    ## @param paperless.tika.enabled [default: true] Enable or disable the Apache&reg; Tika integration
-    ##
-    enabled: true
-    ## @param paperless.tika.endpoint [string] Define the Apache Tika endpoint
-    ##
-    endpoint: ""
-
-  ## Gotenberg configuration
-  ##
-  gotenberg:
-    ## @param paperless.gotenberg.endpoint [string] Define the Apache Gotenberg endpoint
-    ##
-    endpoint: ""
-
-  ## SMTP configuration
-  ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_EMAIL_HOST
-  ##
-  smtp:
-    ## @param paperless.smtp.host [string] The host to an SMTP server
-    ##
-    host: ""
-    ## @param paperless.smtp.port [string] The port for an SMTP server
-    ##
-    port: ""
-    ## @param paperless.smtp.user [string] An SMTP username
-    ##
     user: ""
-    ## @param paperless.smtp.password [string] The password for an SMTP user
-    ##
     password: ""
-    ## @param paperless.smtp.existingSecret [string] A secret containing `username` and `password` key SMTP authentication
-    ##
+    existingSecret: paperless-db
+    # DEPRECATED (PAPERLESS_DBSSLMODE): moved to extraEnvVars as
+    # PAPERLESS_DB_OPTIONS "sslmode=prefer" - see bottom of this file.
+    sslMode: ""
+    timeout: ""
+    certs:
+      rootCert: ""
+      cert: ""
+      key: ""
+  tika:
+    enabled: true
+    endpoint: ""
+  gotenberg:
+    endpoint: ""
+  smtp:
+    host: ""
+    port: ""
+    user: ""
+    password: ""
     existingSecret: ""
-    ## @param paperless.smtp.from [string] The `from` address for emails sent by Paperless
-    ##
     from: ""
-    ## @param paperless.smtp.useTLS [default: false] Whether to use TLS for contacting the SMTP server
-    ##
     useTLS: false
-    ## @param paperless.smtp.useSSL [default: false] Whether to use SSL for contacting the SMTP server
-    ##
     useSSL: false
-
-  ## Application data (paths/filenames) configuration
-  ##
   data:
-    ## Paths configuration
-    ##
     paths:
-      ## @param paperless.data.paths.consumptionDir [string] Define a custom consumption directory
-      ##
       consumptionDir: ""
-      ## @param paperless.data.paths.dataDir [string] Define a custom data directory
-      ##
       dataDir: ""
-      ## @param paperless.data.paths.trashDir [string] Define a custom trash directory
-      ##
       trashDir: ""
-      ## @param paperless.data.paths.emptyTrashDir [string] Define a custom trash directory
-      ##
       emptyTrashDir: ""
-      ## @param paperless.data.paths.mediaRoot [string] Define a custom media directory
-      ##
       mediaRoot: ""
-      ## @param paperless.data.paths.staticDir [string] Define a custom static directory
-      ##
       staticDir: ""
-      ## @param paperless.data.paths.filenameFormat [string] Define a custom filename format
-      ##
       filenameFormat: ""
-      ## @param paperless.data.paths.filenameFormatRemoveNone [default: false] Omit placeholders that would resolve to 'none' in filenameFormat
-      ##
       filenameFormatRemoveNone: false
-      ## @param paperless.data.paths.loggingDir [string] Define a custom logging directory
-      ##
       loggingDir: ""
-      ## @param paperless.data.paths.nltkDir [string] Define a custom NLTK processing directory
-      ##
       nltkDir: ""
-      ## @param paperless.data.paths.emailCertificateLocation [string] Define a path to a certificate (chain) for TLS verification for mail servers
-      ##
       emailCertificateLocation: ""
-      ## @param paperless.data.paths.modelFile [string] This is where paperless will store the classification model. Default is PAPERLESS_DATA_DIR/classification_model.pickle
-      ##
       modelFile: ""
-      ## @param paperless.data.paths.supervisordWorkingDir [string] If this environment variable is defined, the supervisord.log and supervisord.pid file will be created under the specified path
-      ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_SUPERVISORD_WORKING_DIR
-      ##
       supervisordWorkingDir: ""
-
-    ## Kubernetes PVC settings
-    ##
     pvc:
-      ## @param paperless.data.pvc.size [default: 10Gi] The size given to PVCs created from the above data
-      ##
       size: 10Gi
-      ## @param paperless.data.pvc.storageClass [default: standard] The storageClass given to PVCs created from the above data
-      ##
       storageClass: openebs-hostpath
-      ## @param paperless.data.pvc.reclaimPolicy [default: Retain] The resourcePolicy given to PVCs created from the above data
-      ##
       reclaimPolicy: Retain
-      ## @param paperless.data.pvc.existingClaim [string] Provide the name to an existing PVC
-      ##
       existingClaim: ""
-
-  ## Logging configuration
-  ##
   logging:
-    ## @param paperless.logging.logrotateMaxSize [string] Maximum file size for log files before they're rotated
-    ##
     logrotateMaxSize: ""
-    ## @param paperless.logging.logrotateMaxBackups [string] The number of rotated log files to keep
-    ##
     logrotateMaxBackups: ""
-
-  ## OCR configuration
-  ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_OCR_LANGUAGE
-  ##
   ocr:
-    ## @param paperless.ocr.language [default: eng] Customize the language that paperless will attempt to use when parsing documents
-    ##
-    language: deu
-    ## @param paperless.ocr.additionalLanguages [string] Additional languages that paperless will attempt to use when parsing documents
-    ##
-    additionalLanguages: "eng"
-    ## @param paperless.ocr.mode [default: skip] Tell paperless when and how to perform ocr on your documents: `skip`, `redo` and `force`
-    ##
-    mode: skip
-    ## @param paperless.ocr.skipArchiveFile [default: never] Specify when you would like paperless to skip creating an archived version of your documents
-    ##
-    skipArchiveFile: never
-    ## @param paperless.ocr.clean [default: true] Tells paperless to use unpaper to clean any input document before sending it to tesseract
-    ## The following modes are available: `clean`, `clean-final`
-    ##
-    clean: clean
-    ## @param paperless.ocr.deskew [default: true] Tells paperless to correct skewing (slight rotation of input images mainly due to improper scanning)
-    ##
+    language: deu+eng
+    additionalLanguages: eng
+    # v3: `skip`/`skip_noarchive` were removed. `auto` + archiveFileGeneration
+    # below reproduces the old `mode: skip` behavior (skip OCR when text is
+    # present, always produce an archive) - see docs/migration-v3.md.
+    mode: auto
+    # v3 replacement for the removed `skipArchiveFile`. Old `never` ==
+    # new `always` (always generate archive); `always` is also the chart
+    # default, so this renders no env var.
+    archiveFileGeneration: always
     deskew: true
-    ## @param paperless.ocr.rotatePages [default: true] Tells paperless to correct page rotation (90°, 180° and 270° rotation)
-    ##
     rotatePages: true
-    ## @param paperless.ocr.rotatePagesThreshold [default: 12] Adjust the threshold for automatic page rotation by paperless.ocr.rotatePages
-    ##
     rotatePagesThreshold: 12
-    ## @param paperless.ocr.outputType [default: pdfa] Specify the type of PDF documents that paperless should produce
-    ##
     outputType: pdfa
-    ## @param paperless.ocr.pages [string] Tells paperless to use only the specified amount of pages for OCR. Documents with less than the specified amount of pages get OCR'ed completely
-    ##
     pages: ""
-    ## @param paperless.ocr.imageDPI [string] Paperless will OCR any images you put into the system and convert them into PDF documents
-    ##
     imageDPI: ""
-    ## @param paperless.ocr.maxImagePixels [string] Paperless will raise a warning when OCRing images which are over this limit and will not OCR images which are more than twice this limit
-    ##
     maxImagePixels: ""
-    ## @param paperless.ocr.colorConversionStrategy [string] Controls the Ghostscript color conversion strategy when creating the archive file
-    ##
     colorConversionStrategy: ""
-    ## @param paperless.ocr.userArgs [string] OCRmyPDF offers many more options. Use this parameter to specify any additional arguments you wish to pass to OCRmyPDF
-    ##
     userArgs: ""
-
-  ## Conversion configuration
-  ##
   conversion:
-    ## @param paperless.conversion.memoryLimit [string] On smaller systems, or even in the case of Very Large Documents, the consumer may explode, complaining about how it's "unable to extend pixel cache"
-    ##
     memoryLimit: ""
-    ## @param paperless.conversion.tmpDir [string] Similar to the memory limit, if you've got a small system and your OS mounts /tmp as tmpfs, you should set this to a path that's on a physical disk
-    ##
     tmpDir: ""
-
-  ## Consumption configuration
-  ##
   consume:
-    ## @param paperless.consume.deleteDuplicates [default: false] When the consumer detects a duplicate document, it will not touch the original document
-    ##
     deleteDuplicates: true
-    ## @param paperless.consume.recursive [default: false] Enable recursive watching of the consumption directory
-    ##
     recursive: true
-    ## @param paperless.consume.subdirsAsTags [default: false] Set the names of subdirectories as tags for consumed files. E.g. <CONSUMPTION_DIR>/foo/bar/file.pdf will add the tags "foo"
-    ##
     subdirsAsTags: false
-    ## @param paperless.consume.ignorePatterns [string] By default, paperless ignores certain files and folders in the consumption directory
-    ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_CONSUMER_IGNORE_PATTERNS
-    ##
     ignorePatterns: ""
-    ## @param paperless.consume.barcodeScanner [default: PYZBAR] Sets the barcode scanner used for barcode functionality
-    ##
-    barcodeScanner: ZXING
-    ## @param paperless.consume.preConsumeScript [string] After some initial validation, Paperless can trigger an arbitrary script if you like before beginning consumption
-    ##
     preConsumeScript: ""
-    ## @param paperless.consume.postConsumeScript [string] After a document is consumed, Paperless can trigger an arbitrary script if you like
-    ##
+    # VERIFY: empty here means PAPERLESS_POST_CONSUME_SCRIPT is never emitted,
+    # which would make the init container and scripts mount above inert. Check
+    # what the live ConfigMap has:
+    #   kubectl -n paperless get cm paperless-ngx-general -o jsonpath='{.data.PAPERLESS_POST_CONSUME_SCRIPT}'
+    # If it is set there, put the same value here (most likely
+    # /usr/src/paperless/scripts/post-consume.sh). Left empty deliberately so
+    # this change cannot switch the hook on by surprise.
     postConsumeScript: ""
-    ## @param paperless.consume.filenameDateOrder [string] Paperless will check the document text for document date information
-    ##
     filenameDateOrder: ""
-    ## @param paperless.consume.numberOfSuggestedDates [default: 3] Paperless searches an entire document for dates. The first date found will be used as the initial value for the created date
-    ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_NUMBER_OF_SUGGESTED_DATES
-    ##
     numberOfSuggestedDates: 3
-    ## @param paperless.consume.thumbnailFontName [string] Paperless creates thumbnails for plain text files by rendering the content of the file on an image
-    ##
     thumbnailFontName: ""
-    ## @param paperless.consume.ignoreDates [string] Paperless parses a document's creation date from filename and file content. You may specify a comma separated list of dates that should be ignored during this process
-    ##
-    ignoreDates: "17-08-1990,17.08.1990,1990-17-08"
-    ## @param paperless.consume.dateOrder [string] Paperless will try to determine the document creation date from its contents. Specify the date format Paperless should expect to see within your documents
-    ##
+    ignoreDates: 17-08-1990,17.08.1990,1990-17-08
     dateOrder: ""
-
-    ## Polling configuration
-    ##
     polling:
-      ## @param paperless.consume.polling.enabled [default: 0] If paperless won't find documents added to your consume folder, it might not be able to automatically detect filesystem changes
-      ##
       enabled: 0
-      ## @param paperless.consume.polling.retryCount [default: 5] If consumer polling is enabled, sets the maximum number of times paperless will check for a file to remain unmodified
-      ##
       retryCount: 5
-      ## @param paperless.consume.polling.delay [default: 5] If consumer polling is enabled, sets the delay in seconds between each check (above) paperless will do while waiting for a file to remain unmodified
-      ##
       delay: 5
-
-    ## iNotify configuration
-    ##
     iNotify:
-      ## @param paperless.consume.iNotify.delay [default: 0.5] Sets the time in seconds the consumer will wait for additional events from inotify before the consumer will consider a file ready and begin consumption
-      ##
       delay: "0.5"
-
-    ## Barcodes configuration
-    ##
     barcodes:
-      ## @param paperless.consume.barcodes.enabled [default: false] Enables the scanning and page separation based on detected barcodes
-      ##
       enabled: true
-      ## @param paperless.consume.barcodes.tiffSupport [default: false] Whether TIFF image files should be scanned for barcodes
-      ##
       tiffSupport: false
-      ## @param paperless.consume.barcodes.string [default: PATCHT] Defines the string to be detected as a separator barcode
-      ##
-      string: "PATCHT"
-      ## @param paperless.consume.barcodes.enableASNBarcode [default: false] Enables the detection of barcodes in the scanned document and setting the ASN (archive serial number) if a properly formatted barcode is detected
-      ##
+      string: PATCHT
       enableASNBarcode: "true"
-      ## @param paperless.consume.barcodes.ASNBarcodePrefix [default: ASN] Defines the prefix that is used to identify a barcode as an ASN barcode
-      ##
-      ASNBarcodePrefix: "ASN"
-      ## @param paperless.consume.barcodes.upscale [default: 0.0] Defines the upscale factor used in barcode detection
-      ##
+      ASNBarcodePrefix: ASN
       upscale: "0.0"
-      ## @param paperless.consume.barcodes.dpi [default: 300] During barcode detection every page from a PDF document needs to be converted to an image
-      ##
       dpi: 300
-      ## @param paperless.consume.barcodes.enableTagBarcode [default: 300] Enables the detection of barcodes in the scanned document and assigns or creates tags if a properly formatted barcode is detected
-      ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_CONSUMER_ENABLE_TAG_BARCODE
-      ##
       enableTagBarcode: false
-      ## @param paperless.consume.barcodes.tagBarcodeMapping Override the default dictionary of filter regular expression and substitute expressions
-      ## NOTE: Built-in default is '{"TAG:(.*)": "\\g<1>"}'
-      ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_CONSUMER_TAG_BARCODE_MAPPING
-      ##
       tagBarcodeMapping: ""
-
-    ## Collation configuration
-    ##
     collate:
-      ## @param paperless.consume.collate.enableDoubleSided [default: false] Enables automatic collation of two single-sided scans into a double-sided document
-      ##
       enableDoubleSided: false
-      ## @param paperless.consume.collate.doubleSidedSubdirName [default: double-sided] The name of the subdirectory that the collate feature expects documents to arrive
-      ##
       doubleSidedSubdirName: ""
-      ## @param paperless.consume.collate.doubleSidedTiffSupport [default: false] Whether TIFF image files should be supported when collating documents
-      ##
       doubleSidedTiffSupport: false
-
-  ## Binaries configuration
-  ## ref: https://docs.paperless-ngx.com/configuration/#PAPERLESS_CONVERT_BINARY
-  ## There are a few external software packages that Paperless expects to find on your system when it starts up.
-  ## Unless you've done something creative with their installation, you probably won't need to edit any of these.
-  ## However, if you've installed these programs somewhere where simply typing the name of the program doesn't
-  ## automatically execute it (i.e. the program isn't in your $PATH), then you'll need to specify the literal path for
-  ## that program.
-  ##
   binaries:
-    ## @param paperless.binaries.convert [default: convert] The binary name for `convert`
-    ##
     convert: ""
-    ## @param paperless.binaries.gs [default: convert] The binary name for `gs`
-    ##
     gs: ""
-
-## @section ConfigMap parameters
-##
-
-## Paperless ConfigMap settings
-## @param configMap.annotations Annotations for the ConfigMap resource
-## @param configMap.labels Extra Labels for the ConfigMap resource
-
 configMap:
   annotations: {}
   labels: {}
-
-## @section Common Secret parameters
-##
-
-## Paperless Common Secret settings
-## @param secret.annotations Common annotations for the SMTP, HIBP, Admin and Database secrets
-## @param secret.labels Common extra labels for the SMTP, HIBP, Admin and Database secrets
-
 secret:
   annotations: {}
   labels: {}
-
-## @section Ingress parameters
-##
-
-## Paperless Ingress settings
-## @param ingress.enabled Whether to enable Ingress
-## @param ingress.className The IngressClass to use for the pod's ingress
-## @param ingress.whitelist A comma-separated list of IP addresses to whitelist
-## @param ingress.annotations Annotations for the Ingress resource
-## @param ingress.tls A list of hostnames and secret names to use for TLS
-## @param ingress.extraHosts A list of extra hosts for the Ingress resource (with vaultwarden.domain)
-
 ingress:
   enabled: true
-  className: "cilium"
+  className: cilium
   whitelist: ""
   annotations:
     cert-manager.io/cluster-issuer: ca-issuer
-    cert-manager.io/private-key-algorithm: ECDSA                                                                              │
+    cert-manager.io/private-key-algorithm: ECDSA
     cert-manager.io/private-key-size: "256"
-  # kubernetes.io/ingress.class: nginx
-  # kubernetes.io/tls-acme: "true"
   tls:
     - secretName: cert-tls-lab-lan-paperless
       hosts:
         - paperless.lab.lan
   extraHosts: []
-  # - host: domain.tld
-  #   paths:
-  #     - path: /
-  #       pathType: ImplementationSpecific
-
-## @section Service parameters
-##
-
-## Paperless Service settings
+# --- Service ---------------------------------------------------------------
+# REMOVED: `ipFamilies` - the template only renders ipFamilyPolicy, the family
+# list was silently dropped.
+# EMPTIED: `ipFamilyPolicy` - svc.yaml line 54 uses `{{- if ... -}}`, whose
+# trailing dash eats the newline before the field, gluing it onto `name: http`
+# and producing "mapping values are not allowed in this context". Any truthy
+# value breaks the render. Use a HelmRelease postRenderer if you need it.
+# Pods are dual-stack (the live pod has an fd70:.../64 address) but the Service
+# is single-stack v4, so paperless.address stays 0.0.0.0.
 service:
-  ## @param service.type [default: ClusterIP] The type of service to create
-  ##
   type: ClusterIP
-  ## @param service.port [default: 8000] The port to use on the service
-  ##
   port: 8000
-  ## @param service.nodePort [default: 30080] The Node port to use on the service
-  ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
-  ## NOTE: choose port between <30000-32767>
-  ##
   nodePort: 30080
-  ## @param service.extraPorts Extra ports to add to the service
-  ## https://kubernetes.io/docs/concepts/services-networking/service/#multi-port-services
-  ## e.g.
-  ## extraPorts:
-  ##   - name: https
-  ##     protocol: TCP
-  ##     port: 443
-  ##     targetPort: 9377
-  ##
   extraPorts: []
-  ## @param service.annotations [object] Annotations for the service resource
-  ##
   annotations: {}
-  ## @param service.labels [object] Labels for the service resource
-  ##
   labels: {}
-  ## @param service.externalTrafficPolicy [default: Cluster] The external traffic policy for the service
-  ## ref: https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip
-  ##
   externalTrafficPolicy: Cluster
-  ## @param service.internalTrafficPolicy [default: Cluster] The internal traffic policy for the service
-  ## ref: https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip
-  ##
   internalTrafficPolicy: Cluster
-  ## @param service.clusterIP [string] Define a static cluster IP for the service
-  ##
   clusterIP: ""
-  ## @param service.loadBalancerIP Set the Load Balancer IP
-  ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
-  ##
   loadBalancerIP: ""
-  ## @param service.loadBalancerClass Define Load Balancer class if service type is `LoadBalancer` (optional, cloud specific)
-  ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#type-loadbalancer
-  ##
   loadBalancerClass: ""
-  ## @param service.loadBalancerSourceRanges Service Load Balancer source ranges
-  ## https://kubernetes.io/docs/tasks/access-application-cluster/configure-cloud-provider-firewall/#restrict-access-for-loadbalancer-service
-  ## e.g.
-  ## loadBalancerSourceRanges:
-  ##   - 10.10.10.0/24
-  ##
   loadBalancerSourceRanges: []
-  ## @param service.externalIPs Service External IPs
-  ## https://kubernetes.io/docs/concepts/services-networking/service/#external-ips
-  ## e.g.
-  ## externalIPs:
-  ##   - 10.10.10.1
-  ##   - 201.22.30.1
-  ##
   externalIPs: []
-  ## @param service.sessionAffinity Session Affinity for Kubernetes service, can be "None" or "ClientIP"
-  ## If "ClientIP", consecutive client requests will be directed to the same Pod
-  ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#virtual-ips-and-service-proxies
-  ##
   sessionAffinity: None
-  ## @param service.sessionAffinityConfig Additional settings for the sessionAffinity
-  ## sessionAffinityConfig:
-  ##   clientIP:
-  ##     timeoutSeconds: 300
-  ##
   sessionAffinityConfig: {}
-  ## @param service.ipFamilyPolicy [object] The ipFamilyPolicy
-  ## ref: https://kubernetes.io/docs/concepts/services-networking/dual-stack/
-  ##
-  ipFamilyPolicy: PreferDualStack
-  ipFamilies:
-    - IPv4
-    - IPv6
-
-## @section RBAC parameters
-##
-
-## Paperless RBAC settings
-## @param rbac.create Whether to create RBAC resources
-## @param rbac.rules Extra rules to add to the Role
-##
+  ipFamilyPolicy: ""
 rbac:
   create: true
   rules: []
-
-## @section Service Account parameters
-##
-
-## Paperless Service Account settings
-## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
-## @param serviceAccount.create Whether a service account should be created
-## @param serviceAccount.automount Whether to automount the service account token
-## @param serviceAccount.annotations Annotations to add to the service account
-## @param serviceAccount.name A custom name for the service account, otherwise paperless.fullname is used
-## @param serviceAccount.secrets A list of secrets mountable by this service account
-##
 serviceAccount:
   create: true
   automount: false
   annotations: {}
   name: ""
   secrets: []
-
-## @section Liveness Probe parameters
-##
-
-## Paperless Liveness Probe
-## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
-##
 livenessProbe:
-  ## @param livenessProbe.enabled Enable or disable the use of liveness probes
-  ##
   enabled: false
-  ## @param livenessProbe.initialDelaySeconds Configure the initial delay seconds for the liveness probe
-  ##
   initialDelaySeconds: 5
-  ## @param livenessProbe.timeoutSeconds Configure the initial delay seconds for the liveness probe
-  ##
   timeoutSeconds: 1
-  ## @param livenessProbe.periodSeconds Configure the seconds for each period of the liveness probe
-  ##
   periodSeconds: 10
-  ## @param livenessProbe.successThreshold Configure the success threshold for the liveness probe
-  ##
   successThreshold: 1
-  ## @param livenessProbe.failureThreshold Configure the failure threshold for the liveness probe
-  ##
   failureThreshold: 10
-
-## @section Readiness Probe parameters
-##
-
-## Paperless Readiness Probe
-## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
-##
+# CHANGED: startup + readiness enabled. Both are httpGet / on the http port;
+# paperless answers 302 -> login, which counts as success. startupProbe gives
+# 10 min of headroom for migrations before readiness takes over. Liveness left
+# off deliberately. If endpoints flap, set enabled: false and tell me.
 readinessProbe:
-  ## @param readinessProbe.enabled Enable or disable the use of readiness probes
-  ##
-  enabled: false
-  ## @param readinessProbe.initialDelaySeconds Configure the initial delay seconds for the readiness probe
-  ##
-  initialDelaySeconds: 5
-  ## @param readinessProbe.timeoutSeconds Configure the initial delay seconds for the readiness probe
-  ##
-  timeoutSeconds: 1
-  ## @param readinessProbe.periodSeconds Configure the seconds for each period of the readiness probe
-  ##
-  periodSeconds: 10
-  ## @param readinessProbe.successThreshold Configure the success threshold for the readiness probe
-  ##
+  enabled: true
+  initialDelaySeconds: 10
+  timeoutSeconds: 5
+  periodSeconds: 15
   successThreshold: 1
-  ## @param readinessProbe.failureThreshold Configure the failure threshold for the readiness probe
-  ##
-  failureThreshold: 3
-
-## @section Startup Probe parameters
-##
-
-## Paperless Startup Probe
-## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
-##
+  failureThreshold: 6
 startupProbe:
-  ## @param startupProbe.enabled Enable or disable the use of readiness probes
-  ##
-  enabled: false
-  ## @param startupProbe.initialDelaySeconds Configure the initial delay seconds for the startup probe
-  ##
-  initialDelaySeconds: 5
-  ## @param startupProbe.timeoutSeconds Configure the initial delay seconds for the startup probe
-  ##
-  timeoutSeconds: 1
-  ## @param startupProbe.periodSeconds Configure the seconds for each period of the startup probe
-  ##
+  enabled: true
+  initialDelaySeconds: 30
+  timeoutSeconds: 5
   periodSeconds: 10
-  ## @param startupProbe.successThreshold Configure the success threshold for the startup probe
-  ##
   successThreshold: 1
-  ## @param startupProbe.failureThreshold Configure the failure threshold for the startup probe
-  ##
-  failureThreshold: 10
-
-## @section PodDisruptionBudget parameters
-##
-
-## Paperless pod disruption budget settings
-## ref: # https://kubernetes.io/docs/tasks/run-application/configure-pdb/
-## @param podDisruptionBudget.enabled [default: true] Enable the pod disruption budget
-## @param podDisruptionBudget.minAvailable [default: 1] The minimum amount of pods which need to be available
-##
+  failureThreshold: 60
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
-  # maxUnavailable:
-
-## @section Pod settings
-##
-
-## Paperless resource settings
-## ref: https://kubernetes.io/docs/user-guide/compute-resources/
-## @param resources The resource limits/requests for the Paperless pod
-##
-resources: {}
-# limits:
-#   cpu: 100m
-#   memory: 128Mi
-# requests:
-#   cpu: 100m
-#   memory: 128Mi
-
-## ref: https://kubernetes.io/docs/concepts/storage/volumes/
-## @param volumes Define volumes for the Paperless pod
-##
-# TODO: add post-process configmap
+# CHANGED: requests added (paperless had none while tika had limits).
+# Tune the memory limit if pdfa OCR of large scans gets OOMKilled.
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
 volumes:
-  - name: post-consume-script
-    configMap:
-      name: post-consume-script
   - name: scripts-dir
     emptyDir: {}
-
-## ref: https://kubernetes.io/docs/concepts/storage/volumes/
-## @param volumeMounts Define volumeMounts for the Paperless pod
-##
+  # VERIFY: the live pod mounts ConfigMap `post-consume-script` (309d old, not
+  # managed by your kustomization). Your configMapGenerator produces
+  # `paperless-post-consume-script` from post-consume.sh in the repo. Pointing at
+  # the repo-managed one resolves the drift, but confirm the contents match:
+  #   diff <(kubectl -n paperless get cm post-consume-script -o jsonpath='{.data.post-consume\.sh}') \
+  #        <(kubectl -n paperless get cm paperless-post-consume-script -o jsonpath='{.data.post-consume\.sh}')
+  # If they differ, change this to `post-consume-script` to preserve current
+  # behaviour, then reconcile the script in git separately.
+  - name: post-consume-script
+    configMap:
+      name: paperless-post-consume-script
+# RESTORED: the running pod mounts scripts-dir at /usr/src/paperless/scripts and
+# runs the setup-script init container. Both were commented out in the git
+# values, so rendering from that file would have silently removed them.
+# CHANGED: added the export subPath. The chart only mounts data/ and media/;
+# /usr/src/paperless/export was on the container overlay, so document_exporter
+# output was being discarded on restart.
 volumeMounts:
-  - mountPath: /usr/src/paperless/consume
-    name: paperless-ngx-data-pv
+  - name: paperless-ngx-data-pv
+    mountPath: /usr/src/paperless/consume
     subPath: consume
-  # - mountPath: /usr/src/paperless/scripts
-  #   name: post-consume-script
-  #   subPath: post-consume.sh
-  - mountPath: /usr/src/paperless/scripts
-    name: scripts-dir
-
-## ref: https://kubernetes.io/docs/concepts/workloads/pods/init-containers/
-## @param initContainers Define initContainers for the main Paperless server
-##
-# initContainers: []
+  - name: paperless-ngx-data-pv
+    mountPath: /usr/src/paperless/export
+    subPath: export
+  - name: scripts-dir
+    mountPath: /usr/src/paperless/scripts
 initContainers:
   - name: setup-script
+    # `busybox` untagged resolves to :latest - pin a digest or tag when you get
+    # the chance, this is an unversioned dependency in your critical path.
     image: busybox
     command:
       - sh
@@ -944,162 +360,90 @@ initContainers:
         mountPath: /configmap
       - name: scripts-dir
         mountPath: /scripts
-
-## @param nodeSelector Node labels for pod assignment
-## ref: https://kubernetes.io/docs/user-guide/node-selection/
-##
 nodeSelector: {}
-
-## @param tolerations Tolerations for pod assignment
-## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
-##
 tolerations: []
-
-## @param affinity Affinity for pod assignment
-## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
-##
 affinity: {}
-
-## @param strategy Specify a deployment strategy for the Paperless pod
-##
 strategy: {}
-#  type: RollingUpdate
-#  rollingUpdate:
-#    maxUnavailable: 1
-
-## @param podAnnotations Extra annotations for the Paperless pod
-##
+# --- extraEnvVars (chart >=0.4.0) -------------------------------------------
+# v3 allauth changed client-IP detection for login rate limiting; behind the
+# Cilium ingress (1 proxy hop) logins can 403 unless the proxy is trusted.
+# See docs/migration-v3.md "Reverse Proxy and Login Rate Limiting".
+extraEnvVars:
+  - name: PAPERLESS_ALLAUTH_TRUSTED_PROXY_COUNT
+    value: "1"
+  # sslmode moved here from the deprecated PAPERLESS_DBSSLMODE. CNPG has TLS
+  # pinned to TLSv1.3, so keep `prefer` semantics via PAPERLESS_DB_OPTIONS.
+  - name: PAPERLESS_DB_OPTIONS
+    value: sslmode=prefer
 podAnnotations: {}
-
-## @param podLabels Extra labels for the Paperless pod
-##
 podLabels: {}
-#  pod-security.kubernetes.io/warn: privileged
-#  pod-security.kubernetes.io/audit: privileged
-#  pod-security.kubernetes.io/enforce: baseline
-
-## @param priorityClassName The name of an existing PriorityClass
-## ref: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
-##
 priorityClassName: ""
-
-## @section Security context settings
-##
-
-## @param podSecurityContext Security context settings for the Paperless pod
-## ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
-##
 podSecurityContext: {}
-# fsGroup: 1001
-# supplementalGroups:
-#   - 1001
-
-## @param securityContext General security context settings for
-## ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
-##
 securityContext: {}
-# allowPrivilegeEscalation: false
-# privileged: false
-# readOnlyRootFilesystem: true
-# runAsNonRoot: true
-# runAsGroup: 1001
-# runAsUser: 1001
-# capabilities:
-#   drop:
-#     - ALL
-
-## @section Bitnami&reg; PostgreSQL parameters
-##
-
-## PostgreSQL configuration
-## ref: https://github.com/bitnami/charts/blob/main/bitnami/postgresql/values.yaml
+# --- PostgreSQL subchart (disabled - CNPG handles this) ---------------------
+# CHANGED: credentials blanked. Block is inert while enabled: false, but the
+# plaintext defaults had no business sitting in a ConfigMap in git.
 postgresql:
-  ## @param postgresql.enabled Enable or disable the PostgreSQL subchart
-  ##
+  global:
+    imageRegistry: docker.io
+    security:
+      allowInsecureImages: false
+  image:
+    registry: docker.io
+    repository: bitnamisecure/postgresql
+    tag: latest
   enabled: false
-  ## Authentication parameters
-  ## ref: https://github.com/bitnami/containers/tree/main/bitnami/postgresql#setting-the-root-password-on-first-run
-  ## ref: https://github.com/bitnami/containers/tree/main/bitnami/postgresql#creating-a-database-on-first-run
-  ## ref: https://github.com/bitnami/containers/tree/main/bitnami/postgresql#creating-a-database-user-on-first-run
-  ##
   auth:
-    ## @param postgresql.auth.enablePostgresUser Assign a password to the "postgres" admin user. Otherwise, remote access will be blocked for this user
-    ##
-    enablePostgresUser: true
-    ## @param postgresql.auth.postgresPassword Password for the "postgres" admin user. Ignored if `auth.existingSecret` is provided
-    ##
-    postgresPassword: "postgres"
-    ## @param postgresql.auth.username Name for a custom user to create
-    ##
-    username: "paperless"
-    ## @param postgresql.auth.password Password for the custom user to create. Ignored if `auth.existingSecret` is provided
-    ##
-    password: "paperless"
-    ## @param postgresql.auth.database Name for a custom database to create
-    ##
-    database: "paperless"
-    ## @param postgresql.auth.usePasswordFiles Mount credentials as a files instead of using an environment variable
-    ##
+    enablePostgresUser: false
+    postgresPassword: ""
+    username: ""
+    password: ""
+    database: ""
     usePasswordFiles: false
-  ## PostgreSQL Primary parameters
-  ##
   primary:
-    ## @param postgresql.primary.name Name of the primary database (eg primary, master, leader, ...)
-    ##
     name: primary
-    ## PostgreSQL Primary persistence configuration
-    ##
     persistence:
-      ## @param postgresql.primary.persistence.enabled Enable PostgreSQL Primary data persistence using PVC
-      ##
       enabled: true
-      ## @param postgresql.primary.persistence.existingClaim Name of an existing PVC to use
-      ##
       existingClaim: ""
-      ## @param postgresql.primary.persistence.storageClass PVC Storage Class for PostgreSQL Primary data volume
-      ## If defined, storageClassName: <storageClass>
-      ## If set to "-", storageClassName: "", which disables dynamic provisioning
-      ## If undefined (the default) or set to null, no storageClassName spec is
-      ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
-      ##   GKE, AWS & OpenStack)
-      ##
       storageClass: ""
-      ## @param postgresql.primary.persistence.accessModes PVC Access Mode for PostgreSQL volume
-      ##
       accessModes:
         - ReadWriteOnce
-      ## @param postgresql.primary.persistence.size PVC Storage Request for PostgreSQL volume
-      ##
       size: 5Gi
-
-## @section Bitnami&reg; Redis parameters
-##
-
-## Redis configuration
-## ref: https://github.com/bitnami/charts/blob/main/bitnami/redis/values.yaml
+# --- Redis (Bitnami subchart) ----------------------------------------------
+# NEW IN 0.3.x: the image block below is the chart's answer to Bitnami's BSI
+# migration. Your current pods reference docker.io/bitnami/redis:<pinned>,
+# which no longer exists on Docker Hub - it only survives in your node's image
+# cache and would fail to pull on any node rebuild.
+#
+# `bitnamisecure/redis:latest` is unpinned and a newer Redis major than the
+# 7.x that wrote redis-data-paperless-ngx-redis-master-0. If the redis pod
+# fails to start after this rollout, swap in the frozen legacy image:
+#
+#   global:
+#     security:
+#       allowInsecureImages: true
+#   image:
+#     registry: docker.io
+#     repository: bitnamilegacy/redis
+#     tag: "<tag currently running>"
+#
+# The real fix is dropping Bitnami here entirely - the broker holds nothing
+# worth keeping.
 redis:
-  ## @param redis.enabled Enable or disable the Redis&reg; subchart
-  ##
+  global:
+    imageRegistry: docker.io
+    security:
+      allowInsecureImages: false
+  image:
+    registry: docker.io
+    repository: bitnamisecure/redis
+    tag: latest
   enabled: true
-  ## @param redis.architecture Redis&reg; architecture. Allowed values: `standalone` or `replication`
-  ##
   architecture: standalone
-
-  ## Redis&reg; Authentication parameters
-  ## ref: https://github.com/bitnami/containers/tree/main/bitnami/redis#setting-the-server-password-on-first-run
-  ##
   auth:
-    ## @param redis.auth.password Redis&reg; password
-    password: "paperless"
-
-## @section Apache&reg; Tika parameters
-##
-
-## Apache&reg; Tika configuration
-## ref: https://github.com/apache/tika-helm/blob/main/values.yaml
+    password: paperless
+# --- Tika / Gotenberg subcharts --------------------------------------------
 tika:
-  ## @param tika.enabled Enable or disable the Apache Tika subchart
-  ##
   enabled: true
   replicaCount: 1
   resources:
@@ -1109,34 +453,11 @@ tika:
     requests:
       cpu: 50m
       memory: 100Mi
-
-## @section FMJ Studios Gotenberg parameters
-##
-
-## Gotenberg configuration
-## ref: https://github.com/fmjstudios/helm/blob/main/charts/gotenberg/values.yaml
 gotenberg:
-  ## @param gotenberg.enabled Enable or disable the Gotenberg subchart
-  ##
   enabled: true
-
-  ## Gotenberg configuration
-  ## ref: https://gotenberg.dev/docs/configuration
   gotenberg:
-    ## Chromium configuration
-    ##
     chromium:
-      ## @param gotenberg.gotenberg.chromium.disableJavaScript [default: false] Disable JavaScript
-      ##
-      disableJavaScript: true
-      ## @param gotenberg.gotenberg.chromium.allowList [string] Set the allowed URLs for Chromium using a regular expression - defaults to 'All'
-      ##
-      allowList: "file:///tmp/.*"
-
-    ## Logging configuration
-    ##
+      disableJavaScript: false
+      allowList: file:///tmp/.*
     logging:
-      ## @param gotenberg.gotenberg.logging.level [default: info] Choose the level of logging detail
-      ## Options include error, warn, info, or debug
-      ##
       level: warn

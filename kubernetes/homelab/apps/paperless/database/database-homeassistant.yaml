@@ -1,0 +1,19 @@
+---
+# The homeassistant database/role were created manually via `kubectl exec ... psql`
+# because this cluster's CNPG operator does not have the Database CRD reconciler
+# registered (same limitation as talos-flux, verified via controller-manager startup
+# logs -- only cluster/backup/scheduled-backup/database-role/pooler/plugin controllers
+# start). This CR is declarative documentation only, kept in case the reconciler is
+# ever enabled. Consumed cross-namespace by home-assistant (homeautomation namespace)
+# via the homeassistant-db secret in that app's own directory.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: homeassistant-database
+  namespace: paperless
+spec:
+  cluster:
+    name: paperless-postgres-db
+  name: homeassistant
+  owner: homeassistant
+  ensure: present

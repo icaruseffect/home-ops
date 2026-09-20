@@ -1,0 +1,16 @@
+---
+# Documents the database created by Cluster.spec.bootstrap.initdb (cluster-paperless.yaml).
+# The CNPG operator in this cluster does not have the Database CRD reconciler registered
+# (verified via controller-manager startup logs), so this CR is declarative documentation
+# only -- it does not create or manage anything live.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: paperless-database
+  namespace: paperless
+spec:
+  cluster:
+    name: paperless-postgres-db
+  name: paperless
+  owner: paperless
+  ensure: present

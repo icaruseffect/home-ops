@@ -1,0 +1,33 @@
+# yamllint disable rule:line-length
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: post-consume-script
+  labels:
+    app: paperless
+data:
+  post-consume.sh: |
+    #!/usr/bin/env bash
+    set -e
+    PUSH_URL="${NC_UPPUSH_URL}"  # substituted
+
+    # Check required environment variables
+    if [[ -z "$DOCUMENT_ID" || -z "$DOCUMENT_FILE_NAME" ]]; then
+        log "ERROR: Required environment variables not set"
+        exit 1
+    fi
+
+    # Initialize correspondent variable if not set
+    CORRESPONDENT="${DOCUMENT_CORRESPONDENT:-Unknown}"
+
+    MESSAGE="New document: ${CORRESPONDENT} ${DOCUMENT_FILE_NAME} url: https://paperless.lab.lan/documents/${DOCUMENT_ID}/details"
+    echo "Sending notification for document ID ${DOCUMENT_ID}"
+    if curl -s -S -f "$PUSH_URL" --data "$MESSAGE"; then
+        echo "Successfully sent notification"
+        exit 0
+    else
+        CURL_EXIT=$?
+        echo "ERROR: Failed to send notification (curl exit code: $CURL_EXIT)"
+        exit $CURL_EXIT
+    fi

@@ -1,0 +1,14 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  labels:
+    prometheus: system-monitoring-prometheus
+  name: celery-flower
+  namespace: paperless
+spec:
+  staticConfigs:
+    - labels:
+        job: prometheus
+      targets:
+        - celery-flower:5555

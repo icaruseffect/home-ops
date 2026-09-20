@@ -1,0 +1,53 @@
+---
+apiVersion: k8up.io/v1
+kind: Schedule
+metadata:
+  name: paperless
+  namespace: paperless
+spec:
+  backend:
+    repoPasswordSecretRef:
+      name: backup-repo
+      key: password
+    s3:
+      endpoint: https://eu2.contabostorage.com
+      bucket: backup-homelab/k8up/paperless
+      accessKeyIDSecretRef:
+        name: contabo-creds
+        key: username
+      secretAccessKeySecretRef:
+        name: contabo-creds
+        key: password
+
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+
+  backup:
+    # Nightly, after the consume folder has settled. Fixed time rather than
+    # @daily-random so it's predictable — but if you add more namespaces
+    # against this same bucket, switch to '@daily-random' to avoid restic
+    # repo-lock contention.
+    schedule: "30 2 * * *"
+    # Documents are large-ish and rarely change; a slow backup is fine, a
+    # stuck one is not.
+    activeDeadlineSeconds: 7200
+    # paperless writes documents as 0600 paperless:paperless (uid/gid 1000).
+    # The k8up runner defaults to uid 65532, which can traverse the 0755
+    # directories but gets EPERM on open() for every PDF — silently producing
+    # snapshots missing all of media/documents/{originals,archive}.
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+
+  prune:
+    # Runs before the check so integrity is verified post-prune.
+    schedule: "0 3 * * 0"
+    retention:
+      keepLast: 5
+      keepDaily: 14
+      keepWeekly: 8
+      keepMonthly: 12
+      keepYearly: 3
+
+  check:
+    schedule: "0 4 * * 0"
