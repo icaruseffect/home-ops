@@ -16,6 +16,11 @@ spec:
     name: home-ops
   decryption:
     provider: sops
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: paperless-app-vars
+        optional: false
   wait: true
 ---
 # yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/kustomize.toolkit.fluxcd.io/kustomization_v1.json

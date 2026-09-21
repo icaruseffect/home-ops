@@ -9,7 +9,12 @@ resources:
   - secret-paperless-auth.yaml
   # - secret-paperless-db.yaml
   - secret-paperless.yaml
+  - secret-paperless-app-vars.sops.yaml
   - scrapeconfig-celery-flower.yaml
+
+# postBuild substitution for ${NTFY_URL} / ${NC_UPPUSH_URL} (see
+# secret-paperless-app-vars.sops.yaml, wired via the apps-paperless
+# Kustomization's postBuild.substituteFrom).
 
 configMapGenerator:
   - name: paperless-ngx-values
