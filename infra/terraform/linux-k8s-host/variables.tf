@@ -45,3 +45,24 @@ variable "configure_kubelet_network_online_fix" {
   type    = bool
   default = true
 }
+
+variable "configure_registry_precache" {
+  description = <<-EOT
+    Install a systemd timer that periodically re-pulls (via crictl, against
+    the node's own containerd CRI socket) every image currently running in
+    the cluster. Since containerd's certs.d mirrors (registry_mirrors above)
+    already route the pull through the matching Harbor proxy-cache project,
+    this needs no registry-to-Harbor mapping of its own - it just re-requests
+    the original reference and lets containerd route it, which also
+    revalidates floating tags (e.g. `:latest`) against upstream on a
+    schedule instead of leaving them cached forever.
+  EOT
+  type    = bool
+  default = true
+}
+
+variable "registry_precache_schedule" {
+  description = "systemd OnCalendar expression for how often to re-pull currently-running images"
+  type        = string
+  default     = "*-*-* 0/6:00:00"
+}

@@ -7,6 +7,12 @@ locals {
   }
 
   kubelet_dropin = templatefile("${path.module}/templates/kubelet-network-online.conf.tpl", {})
+
+  registry_precache_script  = templatefile("${path.module}/templates/registry-precache.sh.tpl", {})
+  registry_precache_service = templatefile("${path.module}/templates/registry-precache.service.tpl", {})
+  registry_precache_timer = templatefile("${path.module}/templates/registry-precache.timer.tpl", {
+    schedule = var.registry_precache_schedule
+  })
 }
 
 # One containerd certs.d/<registry>/hosts.toml per entry in var.registry_mirrors,
@@ -68,5 +74,49 @@ resource "terraform_data" "kubelet_network_online_fix" {
 
   provisioner "remote-exec" {
     inline = ["systemctl daemon-reload"]
+  }
+}
+
+# Periodically re-pulls every image currently running in the cluster via
+# crictl (see templates/registry-precache.sh.tpl for why this doesn't need
+# its own registry-to-Harbor mapping).
+resource "terraform_data" "registry_precache" {
+  count = var.configure_registry_precache ? 1 : 0
+
+  triggers_replace = {
+    script  = local.registry_precache_script
+    service = local.registry_precache_service
+    timer   = local.registry_precache_timer
+  }
+
+  connection {
+    type  = "ssh"
+    host  = var.ssh_host
+    user  = var.ssh_user
+    port  = var.ssh_port
+    agent = true
+  }
+
+  provisioner "file" {
+    content     = local.registry_precache_script
+    destination = "/usr/local/bin/registry-precache.sh"
+  }
+
+  provisioner "file" {
+    content     = local.registry_precache_service
+    destination = "/etc/systemd/system/registry-precache.service"
+  }
+
+  provisioner "file" {
+    content     = local.registry_precache_timer
+    destination = "/etc/systemd/system/registry-precache.timer"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /usr/local/bin/registry-precache.sh",
+      "systemctl daemon-reload",
+      "systemctl enable --now registry-precache.timer",
+    ]
   }
 }
