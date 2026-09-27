@@ -46,9 +46,6 @@ optional: (dev-prerequisites)
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | <= 1.9.5 |
-| <a name="requirement_cloudflare"></a> [cloudflare](#requirement\_cloudflare) | 4.40.0 |
-| <a name="requirement_http"></a> [http](#requirement\_http) | 3.4.4 |
-| <a name="requirement_sops"></a> [sops](#requirement\_sops) | 1.1.1 |
 
 ### Providers
 
@@ -58,7 +55,7 @@ No providers.
 
 | Name | Source | Version |
 |------|--------|---------|
-| <a name="module_cloudflare"></a> [cloudflare](#module\_cloudflare) | ./cloudflare | n/a |
+| <a name="module_homelab"></a> [homelab](#module\_homelab) | ./linux-k8s-host | n/a |
 
 ### Resources
 
