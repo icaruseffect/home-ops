@@ -38,6 +38,9 @@ config:
     decisions:
       - type: ban
         duration: 4h
+    # Ban length grows with the number of earlier decisions on the same IP:
+    # 4h, 8h, 12h ... capped at 7d. duration_expr is a profile-level field.
+    duration_expr: "Sprintf('%dh', GetDecisionsCount(Alert.GetValue()) >= 41 ? 168 : (GetDecisionsCount(Alert.GetValue()) + 1) * 4)"
     notifications:
       - ntfy_default
     on_success: break
@@ -212,7 +215,7 @@ lapi:
     - name: COLLECTIONS
       value: "crowdsecurity/linux crowdsecurity/http-cve"
     - name: ENROLL_INSTANCE_NAME
-      value: "klingel-cloud"
+      value: "cloud"
     - name: ENROLL_TAGS
       value: "k8s linux talos"
     - name: ENROLL_KEY
