@@ -1,0 +1,17 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: crowdsec
+resources:
+  - helmrepository.yaml
+  - helmrelease.yaml
+  - secret-crowdsec.sops.yaml
+  - secret-crowdsec-ntfy.sops.yaml
+  - secret-crowdsec-whitelist.sops.yaml
+configMapGenerator:
+  - name: crowdsec-values
+    files:
+      - values-crowdsec.yaml
+generatorOptions:
+  disableNameSuffixHash: true

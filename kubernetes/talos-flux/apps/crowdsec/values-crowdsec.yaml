@@ -1,0 +1,312 @@
+---
+# CrowdSec Helm values (chart crowdsec 0.24.x, app v1.8.x).
+container_runtime: containerd
+
+image:
+  repository: crowdsecurity/crowdsec
+  # Pinned; bump deliberately (hub collections are fetched at pod start).
+  tag: v1.8.1
+
+secrets:
+  externalSecret:
+    name: crowdsec-secrets
+    csLapiSecretKey: csLapiSecret
+    registrationTokenKey: registrationToken
+
+config:
+  config.yaml.local: |
+    api:
+      server:
+        auto_registration: # Activate if not using TLS for authentication
+          enabled: true
+          token: "$${REGISTRATION_TOKEN}" # /!\ Do not modify this variable (auto-generated and handled by the chart)
+          allowed_ranges: # Cluster pod/service CIDRs only.
+            - "127.0.0.1/32"
+            - "10.0.0.0/8"
+  # Chart-default profiles plus ntfy notifications on every local ban alert.
+  profiles.yaml: |
+    name: default_ip_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    notifications:
+      - ntfy_default
+    on_success: break
+    ---
+    name: default_range_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Range"
+    decisions:
+      - type: ban
+        duration: 4h
+    notifications:
+      - ntfy_default
+    on_success: break
+
+  # ntfy push for alerts routed to `ntfy_default`. Token comes from Secret
+  # crowdsec-ntfy (lapi.env below); user `crowdsec` is write-only on topic
+  # `crowdsec`. In-cluster URL avoids the gateway hairpin.
+  notifications:
+    ntfy.yaml: |
+      type: http
+      name: ntfy_default
+      log_level: info
+      url: http://ntfy.ntfy.svc.cluster.local/crowdsec
+      method: POST
+      headers:
+        Authorization: "Bearer $${NTFY_TOKEN}"
+        Title: "CrowdSec (${SECRET_DOMAIN})"
+        Priority: high
+        Tags: warning,shield
+        Content-Type: text/plain
+      format: |
+        {{range . -}}
+        {{.Scenario}}: {{.Source.Value}}{{if .Source.Cn}} ({{.Source.Cn}}){{end}}
+        {{.Message}}
+        {{end -}}
+      timeout: 10s
+
+  parsers:
+    s01-parse:
+      # Cilium Envoy Gateway JSON access logs, emitted to cilium-envoy pod
+      # stdout via CiliumGatewayClassConfig (spec.telemetry.accessLogs; see
+      # kubernetes/talos-flux/apps/kube-system/cilium/config/envoy-access-logs.yaml).
+      # As of 2026-09-29 this replaces the earlier "access logs do NOT go to
+      # stdout" assumption below the nextcloud-apache-logs parser: they now
+      # do, cluster-wide, for every *.${SECRET_DOMAIN} route. The cilium-envoy
+      # pod also emits its own non-JSON operational log lines (startup,
+      # xDS updates) on the same stdout, hence the `startsWith '{'` guard.
+      envoy-json-access-logs.yaml: |
+        onsuccess: next_stage
+        filter: "evt.Parsed.program == 'cilium-envoy' && evt.Parsed.message startsWith '{'"
+        name: custom/envoy-json-access-logs
+        description: "Parse Cilium Envoy Gateway JSON access logs from cilium-envoy pod stdout"
+        statics:
+          - meta: log_type
+            value: http_access-log
+          - meta: service
+            value: http
+          - meta: source_ip
+            expression: "JsonExtract(evt.Parsed.message, 'source_ip')"
+          - meta: http_status
+            expression: "JsonExtract(evt.Parsed.message, 'status')"
+          - parsed: verb
+            expression: "JsonExtract(evt.Parsed.message, 'method')"
+          - parsed: request
+            expression: "JsonExtract(evt.Parsed.message, 'path')"
+          - parsed: http_user_agent
+            expression: "JsonExtract(evt.Parsed.message, 'user_agent')"
+          - meta: gateway_authority
+            expression: "JsonExtract(evt.Parsed.message, 'authority')"
+          - target: evt.StrTime
+            expression: "JsonExtract(evt.Parsed.message, 'timestamp')"
+      # The nextcloud container emits Apache combined-format access logs on
+      # stdout (program label `nextcloud`), NOT Nextcloud's native JSON.
+      # crowdsecurity/nextcloud-logs only parses native JSON and therefore
+      # matches nothing (verified live: 53k lines read, 0 parsed). This local
+      # parser groks the access line with the bundled NGINXACCESS pattern
+      # (identical field layout to Apache combined) and sets
+      # log_type=http_access-log / service=http so crowdsecurity/http-logs,
+      # nextcloud-whitelist, http-cve and http scenarios apply.
+      nextcloud-apache-logs.yaml: |
+        onsuccess: next_stage
+        filter: "evt.Parsed.program == 'nextcloud'"
+        name: custom/nextcloud-apache-logs
+        description: "Parse Nextcloud Apache access logs from container stdout"
+        nodes:
+          - grok:
+              pattern: '%{NGINXACCESS}'
+              apply_on: message
+              statics:
+                - meta: log_type
+                  value: http_access-log
+                - meta: service
+                  value: http
+                - meta: source_ip
+                  expression: evt.Parsed.remote_addr
+                - meta: http_status
+                  expression: evt.Parsed.status
+                - target: evt.StrTime
+                  expression: evt.Parsed.time_local
+        statics:
+          - meta: service
+            value: http
+    s02-enrich:
+      # Kubernetes liveness/readiness probes (user-agent `kube-probe/<ver>`)
+      # hit nextcloud (/status.php) and imaginary (/health) every few seconds
+      # and would otherwise flow into the http scenarios as bogus traffic.
+      # A whitelist node is the purpose-built drop mechanism: whitelisted
+      # lines stop before the buckets and are counted under cscli metrics
+      # "Whitelist Metrics" (same mechanism as the hub's
+      # crowdsecurity/whitelists private-IP whitelist).
+      kube-probe-whitelist.yaml: |
+        name: custom/kube-probe-whitelist
+        description: "Whitelist kubernetes kube-probe HTTP requests"
+        filter: "evt.Meta.service == 'http' && evt.Parsed.http_user_agent startsWith 'kube-probe/'"
+        whitelist:
+          reason: "kubernetes kube-probe"
+          expression:
+            - "evt.Meta.service == 'http'"
+      # The hub k8s-audit scenarios (bruteforce, service-account-access-denied)
+      # read responseStatus.code / annotations["authorization.k8s.io/decision"]
+      # unconditionally, but stage=RequestReceived audit events carry neither —
+      # the expr engine then errors with "cannot fetch code from <nil>" and
+      # bucketify fails for the whole line. Whitelist RequestReceived lines:
+      # they carry no verdict, so nothing is lost; ResponseComplete/ Panic
+      # duplicates of the same auditID still reach the scenarios.
+      k8s-audit-requestreceived-whitelist.yaml: |
+        name: custom/k8s-audit-requestreceived-whitelist
+        description: "Drop k8s audit RequestReceived events (no responseStatus)"
+        filter: "evt.Meta.log_type == 'k8s-audit'"
+        whitelist:
+          reason: "k8s audit RequestReceived stage (no response fields)"
+          expression:
+            - "evt.Unmarshaled.k8s_audit.stage == 'RequestReceived'"
+      # Grafana's container emits plaintext lines that are neither JSON nor
+      # KV: the startup banner (UTF-8 box-drawing chars), plugin install
+      # notices, empty lines. LePresidente/grafana-logs fails to unmarshal
+      # these and spews "failed to run filter / cannot fetch msg from <nil>"
+      # warnings per line. They carry no auth signal (auth events are JSON
+      # with msg/errorMessageID), so whitelist anything grafana-emitted that
+      # failed to unmarshal.
+      grafana-plaintext-whitelist.yaml: |
+        name: custom/grafana-plaintext-whitelist
+        description: "Drop grafana lines that are neither JSON nor KV (banner/noise)"
+        filter: "evt.Parsed.program == 'grafana' && evt.Unmarshaled.grafana == nil && not (evt.Parsed.message contains 'remote_addr' || evt.Parsed.message contains 'status=')"
+        whitelist:
+          reason: "grafana plaintext banner/noise line (no auth signal)"
+          expression:
+            - "evt.Parsed.program == 'grafana' && evt.Unmarshaled.grafana == nil && not (evt.Parsed.message contains 'remote_addr' || evt.Parsed.message contains 'status=')"
+
+tls:
+  enabled: false
+
+lapi:
+  enabled: true
+  replicas: 1
+  env:
+    # Register the cilium bouncer's API key at LAPI startup (name -> BOUNCER_KEY_<name>).
+    # NOTE: DISABLE_AGENT is NOT set here — chart 0.24.x already injects it on the
+    # lapi container; duplicating it broke helm-controller reconciliation (StateError
+    # since 2026-09-16: duplicate env key).
+    - name: BOUNCER_KEY_cilium_bouncer
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-bouncer-api
+          key: api-key
+    - name: NTFY_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-ntfy
+          key: token
+    # Hub items installed by the LAPI pod; shared with agents via LAPI.
+    - name: COLLECTIONS
+      value: "crowdsecurity/linux crowdsecurity/http-cve"
+    - name: ENROLL_INSTANCE_NAME
+      value: "klingel-cloud"
+    - name: ENROLL_TAGS
+      value: "k8s linux talos"
+    - name: ENROLL_KEY
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-secrets
+          key: enrollKey
+  persistentVolume:
+    data:
+      enabled: true
+      storageClassName: openebs-hostpath
+      size: 2Gi
+    config:
+      enabled: true
+      storageClassName: openebs-hostpath
+      size: 1Gi
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: prometheus-stack
+  resources:
+    requests:
+      cpu: 100m
+      memory: 200Mi
+    limits:
+      memory: 500Mi
+  strategy:
+    type: Recreate
+
+agent:
+  enabled: true
+  acquisition:
+    # Cilium Envoy Gateway: JSON access logs for every *.${SECRET_DOMAIN} route,
+    # enabled 2026-09-29 via CiliumGatewayClassConfig (see
+    # kubernetes/talos-flux/apps/kube-system/cilium/config/envoy-access-logs.yaml).
+    # Parsed by the envoy-json-access-logs local parser above. Alloy also
+    # ships this same cilium-envoy stdout to Greptime independently (for
+    # dashboards) - there is no supported Alloy->crowdsec push/pull path
+    # (checked live: crowdsec's http source has no matching Alloy sink, and
+    # Greptime doesn't implement Loki's query/tail read API for crowdsec's
+    # loki source to pull from), so both sides tail the same pod stdout
+    # directly rather than one feeding the other.
+    - namespace: kube-system
+      podName: "cilium-envoy-*"
+      program: cilium-envoy
+    # NOTE: authelia lives in namespace `authelia` (no `auth` ns on this cluster).
+    - namespace: authelia
+      podName: "authelia-*"
+      program: authelia
+    - namespace: observability
+      podName: "grafana-*"
+      program: grafana
+    - namespace: books
+      podName: "calibre-web-automated-*"
+      program: calibre-web
+  # kube-apiserver audit log (Talos writes it to /var/log/audit/kube/ on the
+  # node, NOT to /var/log/containers). Feeds the already-enabled
+  # k8s-audit-api-server-bruteforce / k8s-audit-service-account-access-denied
+  # scenarios. Requires agent.hostVarLog volume to mount /var/log.
+  additionalAcquisition:
+    # Nextcloud app container only. The chart's acquisition glob is
+    # `<pod>_<ns>_*.log`, which also catches the imaginary pod and the
+    # nextcloud-cron / nextcloud-log-agent containers (all unparsed noise).
+    # Container log files are `<pod>_<ns>_<container>-<64 hex>.log`, so
+    # `nextcloud-` plus exactly 64 chars matches only container `nextcloud`
+    # (`nextcloud-cron-<hex>` etc. are longer).
+    - source: file
+      filenames:
+        - /var/log/containers/nextcloud-*_cloud_nextcloud-????????????????????????????????????????????????????????????????.log
+      force_inotify: true
+      poll_without_inotify: false
+      labels:
+        type: containerd
+        program: nextcloud
+    - source: file
+      filenames:
+        - /var/log/audit/kube/kube-apiserver.log
+        - /var/log/audit/kube/kube-apiserver-*.log
+      force_inotify: true
+      poll_without_inotify: false
+      labels:
+        type: k8s-audit
+        program: k8s-audit
+  env:
+    # Parsers must be installed on the agent too (its hub is local-only).
+    - name: PARSERS
+      value: "crowdsecurity/cri-logs crowdsecurity/http-logs crowdsecurity/k8s-audit LePresidente/authelia-logs LePresidente/grafana-logs"
+    - name: COLLECTIONS
+      value: "LePresidente/authelia LePresidente/grafana crowdsecurity/nextcloud Jgigantino31/calibre-web crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+    - name: SCENARIOS
+      value: "crowdsecurity/k8s-audit-api-server-bruteforce crowdsecurity/k8s-audit-service-account-access-denied crowdsecurity/nextcloud-bf LePresidente/authelia-bf"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      memory: 250Mi
+  # Talos: no docker socket. /var/log/containers is CRI-only.
+  hostVarLog: true
+
+appsec:
+  enabled: false
