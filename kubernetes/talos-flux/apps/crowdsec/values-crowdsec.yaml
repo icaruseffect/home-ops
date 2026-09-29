@@ -58,7 +58,7 @@ config:
       headers:
         Authorization: "Bearer $${NTFY_TOKEN}"
         Title: "CrowdSec (${SECRET_DOMAIN})"
-        Priority: high
+        Priority: low
         Tags: warning,shield
         Content-Type: text/plain
       format: |
