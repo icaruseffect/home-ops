@@ -23,6 +23,13 @@ config:
           allowed_ranges: # Cluster pod/service CIDRs only.
             - "127.0.0.1/32"
             - "10.0.0.0/8"
+    # The bouncer pods share one API key, so the LAPI registers a new
+    # `cilium_bouncer@<pod-ip>` entry per pod IP. Drop entries idle for 24h
+    # (live bouncers pull every 60s) so pod restarts do not accumulate them.
+    db_config:
+      flush:
+        bouncers_autodelete:
+          api_key: 24h
   # Chart-default profiles plus ntfy notifications on every local ban alert.
   profiles.yaml: |
     name: default_ip_remediation
