@@ -21,9 +21,18 @@ Files here: `namespace.yaml`, `backend.yaml` (selectorless Service + EndpointSli
   authentication is Home Assistant's login.
 - Authelia OIDC client "Home Assistant" (values `configMap.identity_providers.oidc.clients`) has
   redirect URIs `https://hass.lab.lan/auth/openid/callback` and
-  `https://ha.${SECRET_DOMAIN}/auth/openid/callback`. Its `authorization_policy` is `one_factor`;
-  set it to `two_factor` to require 2FA for OIDC logins. Home Assistant's local password login stays
-  available unless disabled in its auth providers.
+  `https://ha.${SECRET_DOMAIN}/auth/openid/callback`. Its `authorization_policy` is `two_factor`
+  (both hosts).
+- **Local password login is not blocked** (open item). It cannot be blocked at the HTTPRoute: the
+  frontend starts every login with `POST /auth/login_flow` and picks the provider in the JSON body
+  (`handler: ["homeassistant", null]` vs `["openid", null]`), and HTTPRoute matches only path, headers,
+  query and method. The `openid` custom component (v1.3.0) can do it server-side: with
+  `openid: block_login: true` in `/config/configuration.yaml` (currently `false`) it overrides
+  `POST /auth/login_flow` and returns an empty form without a flow id, so no local flow can start.
+  Keep `trusted_ips` **empty**: the component takes the leftmost `X-Forwarded-For` entry, which a client
+  can set itself, so a LAN CIDR in `trusted_ips` could be spoofed from the internet. Consequence: no
+  password login on the LAN either; break-glass is setting `block_login: false` via `kubectl exec` and
+  restarting Home Assistant. Not applied yet; the mobile app's login through Authelia is untested.
 - The route attaches only to the HTTPS listener (tokens must not travel in cleartext); `http://` gets 404.
 - `172.30.99.1/32` (the gateway's tunnel address) is in Home Assistant's `http.trusted_proxies`
   (`/config/configuration.yaml` on the PVC, backup `configuration.yaml.bak-20260930-wg`; not managed by git).
@@ -75,7 +84,38 @@ Until added there, re-applying those files will drop them.
 
    Previous solvers (rollback): the `ingress` solver with `ingressClassName: cilium` for zone `klingel.cloud`.
 
-4. **homelab Cilium** `devices: [enp0s25, wg0]` (`kubernetes/homelab/apps/kube-system/cilium/app/helm-values.yaml`).
+4. **CrowdSec scenario** (`kubernetes/talos-flux/apps/crowdsec/values-crowdsec.yaml`, under `config:`,
+   before `parsers:`). Home Assistant answers a failed login with HTTP 200, so hub scenarios miss it;
+   this counts login-flow POSTs per source IP from the gateway access logs (verified: 8 POSTs -> ban
+   for ~4h, enforced by the bouncer as 403; the test ban was removed):
+
+   <!-- markdownlint-disable MD013 -->
+
+   ```yaml
+   scenarios:
+     ha-login-bf.yaml: |
+       type: leaky
+       name: custom/ha-login-bf
+       description: "Home Assistant login brute force (login_flow POSTs via the gateway)"
+       filter: "evt.Meta.log_type == 'http_access-log' && evt.Parsed.verb == 'POST' && evt.Parsed.request startsWith '/auth/login_flow/' && evt.Meta.gateway_authority == 'hass.lab.lan'"
+       groupby: evt.Meta.source_ip
+       capacity: 5
+       leakspeed: 30s
+       blackhole: 1m
+       labels:
+         service: home-assistant
+         type: bruteforce
+         remediation: true
+   ```
+
+   <!-- markdownlint-enable MD013 -->
+
+   Applied by regenerating the `crowdsec-values` ConfigMap; the chart creates `crowdsec-scenarios`
+   and restarts only the agent. Rollback: remove the block and reapply. `evt.Meta.gateway_authority`
+   is `hass.lab.lan` because the route rewrites the host. Lift an accidental ban with
+   `cscli decisions delete --ip <ip>` in the `crowdsec-lapi` pod.
+
+5. **homelab Cilium** `devices: [enp0s25, wg0]` (`kubernetes/homelab/apps/kube-system/cilium/app/helm-values.yaml`).
    Needed so NodePorts answer on `wg0`.
 
 ## Rollback (reverse order)
