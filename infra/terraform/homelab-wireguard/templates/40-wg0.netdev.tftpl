@@ -1,0 +1,13 @@
+[NetDev]
+Name=wg0
+Kind=wireguard
+MTUBytes=${mtu}
+
+[WireGuard]
+PrivateKeyFile=/etc/systemd/network/wg0.key
+
+[WireGuardPeer]
+PublicKey=${talos_public_key}
+Endpoint=${talos_endpoint}
+AllowedIPs=${peer_allowed_ip}
+PersistentKeepalive=${keepalive}
