@@ -15,19 +15,3 @@ spec:
     - group: ""
       kind: Service
       name: envoy-crowdsec-bouncer
----
-# ... and Authelia's ext-authz endpoint.
-apiVersion: gateway.networking.k8s.io/v1
-kind: ReferenceGrant
-metadata:
-  name: authelia-from-homeassistant
-  namespace: authelia
-spec:
-  from:
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      namespace: homeassistant
-  to:
-    - group: ""
-      kind: Service
-      name: authelia

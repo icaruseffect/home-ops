@@ -1,6 +1,12 @@
 ---
-# Home Assistant (homelab cluster) behind Authelia. Only attached to the HTTPS
-# listener: the bypassed paths carry bearer tokens / webhook ids.
+# Home Assistant (homelab cluster). Only attached to the HTTPS listener: app
+# tokens and webhook ids must not travel in cleartext.
+#
+# Cilium honours only ONE ExternalAuth filter per rule, and CrowdSec takes
+# priority: it is the ban enforcement used on every public host. Authentication
+# is Home Assistant's own login, which uses Authelia as OpenID Connect provider
+# (client "Home Assistant" in the Authelia values, redirect URI
+# https://ha.${SECRET_DOMAIN}/auth/openid/callback).
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -14,22 +20,10 @@ spec:
   hostnames:
     - ha.${SECRET_DOMAIN}
   rules:
-    # Paths that must work without an Authelia browser session (Companion app,
-    # webhooks, token exchange, websocket). Home Assistant's own auth applies.
-    # CrowdSec still enforces bans.
     - matches:
         - path:
             type: PathPrefix
-            value: /api/webhook/
-        - path:
-            type: PathPrefix
-            value: /api/companion/
-        - path:
-            type: Exact
-            value: /auth/token
-        - path:
-            type: Exact
-            value: /api/websocket
+            value: /
       filters:
         - type: ExternalAuth
           externalAuth:
@@ -42,40 +36,6 @@ spec:
               namespace: crowdsec
               port: 8080
         # the homelab ingress only matches this host
-        - type: URLRewrite
-          urlRewrite:
-            hostname: hass.lab.lan
-      backendRefs:
-        - name: home-assistant
-          port: 80
-    # Everything else: Authelia (two_factor rule for ha.${SECRET_DOMAIN}).
-    # NOTE: Cilium honours only ONE ExternalAuth filter per rule (a second one
-    # makes it disable the other in the generated Envoy route), so CrowdSec is
-    # not enforced on this path; the bypass rule above keeps it.
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      filters:
-        - type: ExternalAuth
-          externalAuth:
-            protocol: HTTP
-            http:
-              path: /api/authz/ext-authz/
-              allowedHeaders:
-                - cookie
-                - authorization
-                - proxy-authorization
-                - accept
-                - user-agent
-                - x-forwarded-proto
-                - x-forwarded-for
-            backendRef:
-              group: ""
-              kind: Service
-              name: authelia
-              namespace: authelia
-              port: 80
         - type: URLRewrite
           urlRewrite:
             hostname: hass.lab.lan
