@@ -1,0 +1,32 @@
+---
+# Home Assistant runs on the homelab cluster. It is reached over the WireGuard
+# link (infra/terraform/homelab-wireguard): 172.30.99.2 is homelab's wg0 address
+# and 30804 is the NodePort of homelab's cilium-ingress (HTTP; the Ingress
+# `tls-ingress-hass` has force-https disabled and only matches Host: hass.lab.lan).
+apiVersion: v1
+kind: Service
+metadata:
+  name: home-assistant
+  namespace: homeassistant
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 30804
+      protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: home-assistant
+  namespace: homeassistant
+  labels:
+    kubernetes.io/service-name: home-assistant
+addressType: IPv4
+ports:
+  - name: http
+    port: 30804
+    protocol: TCP
+endpoints:
+  - addresses:
+      - 172.30.99.2

@@ -1,0 +1,84 @@
+---
+# Home Assistant (homelab cluster) behind Authelia. Only attached to the HTTPS
+# listener: the bypassed paths carry bearer tokens / webhook ids.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: home-assistant
+  namespace: homeassistant
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: https-ha.${SECRET_DOMAIN}
+  hostnames:
+    - ha.${SECRET_DOMAIN}
+  rules:
+    # Paths that must work without an Authelia browser session (Companion app,
+    # webhooks, token exchange, websocket). Home Assistant's own auth applies.
+    # CrowdSec still enforces bans.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/webhook/
+        - path:
+            type: PathPrefix
+            value: /api/companion/
+        - path:
+            type: Exact
+            value: /auth/token
+        - path:
+            type: Exact
+            value: /api/websocket
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: GRPC
+            grpc: {}
+            backendRef:
+              group: ""
+              kind: Service
+              name: envoy-crowdsec-bouncer
+              namespace: crowdsec
+              port: 8080
+        # the homelab ingress only matches this host
+        - type: URLRewrite
+          urlRewrite:
+            hostname: hass.lab.lan
+      backendRefs:
+        - name: home-assistant
+          port: 80
+    # Everything else: Authelia (two_factor rule for ha.${SECRET_DOMAIN}).
+    # NOTE: Cilium honours only ONE ExternalAuth filter per rule (a second one
+    # makes it disable the other in the generated Envoy route), so CrowdSec is
+    # not enforced on this path; the bypass rule above keeps it.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            http:
+              path: /api/authz/ext-authz/
+              allowedHeaders:
+                - cookie
+                - authorization
+                - proxy-authorization
+                - accept
+                - user-agent
+                - x-forwarded-proto
+                - x-forwarded-for
+            backendRef:
+              group: ""
+              kind: Service
+              name: authelia
+              namespace: authelia
+              port: 80
+        - type: URLRewrite
+          urlRewrite:
+            hostname: hass.lab.lan
+      backendRefs:
+        - name: home-assistant
+          port: 80

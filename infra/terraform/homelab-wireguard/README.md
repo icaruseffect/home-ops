@@ -54,6 +54,13 @@ Always `talosctl patch machineconfig --patch @file --dry-run` first (diff must o
 Rollback: re-apply without the `wg0` interface, or let a `try` apply expire.
 Update `talos_public_key` in `variables.tf` to the public key of the key you generate.
 
+## Cilium requirement (homelab)
+
+homelab Cilium only serves NodePorts on its `devices`, so `wg0` must be listed:
+`devices: [enp0s25, wg0]` in the Cilium helm values. Changing it restarts the agent; on 2026-09-30 that
+also re-allocated the IPv6 router address (see `kubernetes/talos-flux/apps/homeassistant/README.md`,
+"Incident note"). Rollback = set `devices` back to `enp0s25` and let the HelmRelease upgrade.
+
 ## Verify
 
 `wg show wg0` on both ends shows a recent handshake; `ping 172.30.99.1` from homelab.
