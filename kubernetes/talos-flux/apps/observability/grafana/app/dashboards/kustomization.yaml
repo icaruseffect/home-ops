@@ -6,6 +6,12 @@ configMapGenerator:
   - name: dashboards
     files:
       - resource-usage.json=resource-usage.json
+  - name: crowdsec-dashboard
+    files:
+      - crowdsec.json=crowdsec.json
+    options:
+      annotations:
+        grafana_folder: "security"
 generatorOptions:
   disableNameSuffixHash: true
   annotations:
