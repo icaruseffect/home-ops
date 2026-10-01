@@ -9,6 +9,8 @@ resources:
   - secret-crowdsec.sops.yaml
   - secret-crowdsec-ntfy.sops.yaml
   - secret-crowdsec-whitelist.sops.yaml
+  - httproute-unknown-host.yaml
+  - cronjob-dyn-allowlist.yaml
 configMapGenerator:
   - name: crowdsec-values
     files:

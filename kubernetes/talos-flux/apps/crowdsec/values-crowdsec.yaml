@@ -30,11 +30,26 @@ config:
       flush:
         bouncers_autodelete:
           api_key: 24h
-  # Chart-default profiles plus ntfy notifications on every local ban alert.
+  # Chart-default profiles; ntfy notifications only for high-severity IP alerts.
   profiles.yaml: |
-    name: default_ip_remediation
+    name: default_ip_remediation_already_blocked
+    # IPs that already have an active decision: still extend the ban (same
+    # escalation as below) but do not notify again.
     filters:
-      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+      - Alert.Remediation == true && Alert.GetScope() == "Ip" && GetActiveDecisionsCount(Alert.GetValue()) > 0
+    decisions:
+      - type: ban
+        duration: 4h
+    duration_expr: "Sprintf('%dh', GetDecisionsCount(Alert.GetValue()) >= 41 ? 168 : (GetDecisionsCount(Alert.GetValue()) + 1) * 4)"
+    on_success: break
+    ---
+    name: ip_remediation_high_severity
+    # CrowdSec alerts carry no severity field, so "high severity" is decided by
+    # scenario: credential brute force, exploit/CVE/RCE attempts, backdoors,
+    # SQLi/XSS/path traversal, open-proxy abuse, k8s-audit and ssh scenarios.
+    # Only these notify; the ban is the same as for every other IP alert.
+    filters:
+      - 'Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() matches "(?i)(-bf|bruteforce|cve|vmsa|_rce|log4j|spring4shell|backdoors|sqli|xss|path-traversal|open-proxy|k8s-audit|/ssh-|ha-login)"'
     decisions:
       - type: ban
         duration: 4h
@@ -45,14 +60,22 @@ config:
       - ntfy_default
     on_success: break
     ---
+    name: default_ip_remediation
+    # Everything else (crawling, probing, bad user agents, ...): ban, no notification.
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    duration_expr: "Sprintf('%dh', GetDecisionsCount(Alert.GetValue()) >= 41 ? 168 : (GetDecisionsCount(Alert.GetValue()) + 1) * 4)"
+    on_success: break
+    ---
     name: default_range_remediation
     filters:
       - Alert.Remediation == true && Alert.GetScope() == "Range"
     decisions:
       - type: ban
         duration: 4h
-    notifications:
-      - ntfy_default
     on_success: break
 
   # ntfy push for alerts routed to `ntfy_default`. Token comes from Secret
@@ -77,6 +100,45 @@ config:
         {{.Message}}
         {{end -}}
       timeout: 10s
+
+  scenarios:
+    # Home Assistant answers a failed login with HTTP 200 (errors.base=invalid_auth),
+    # so status-based hub scenarios never see it. Count login-flow POSTs per source IP
+    # from the gateway access logs instead. A legitimate login is 1-2 POSTs. The gateway
+    # rewrites the host to hass.lab.lan (URLRewrite), which is what the log's authority shows.
+    ha-login-bf.yaml: |
+      type: leaky
+      name: custom/ha-login-bf
+      description: "Home Assistant login brute force (login_flow POSTs via the gateway)"
+      filter: "evt.Meta.log_type == 'http_access-log' && evt.Parsed.verb == 'POST' && evt.Parsed.request startsWith '/auth/login_flow/' && evt.Meta.gateway_authority == 'hass.lab.lan'"
+      groupby: evt.Meta.source_ip
+      capacity: 5
+      leakspeed: 30s
+      blackhole: 1m
+      labels:
+        service: home-assistant
+        type: bruteforce
+        remediation: true
+    # Plain-HTTP requests for hostnames that have no route are answered by the
+    # catch-all HTTPRoute (apps/crowdsec/httproute-unknown-host.yaml) with a 308
+    # redirect. Real clients never send these; vhost scanners send hundreds.
+    unknown-host-scan.yaml: |
+      type: leaky
+      name: custom/gateway-unknown-host-scan
+      description: "Scanning of unknown hostnames on the gateway (catch-all 308)"
+      filter: "evt.Meta.log_type == 'http_access-log' && evt.Meta.http_status == '308'"
+      groupby: evt.Meta.source_ip
+      capacity: 5
+      leakspeed: 20s
+      blackhole: 5m
+      labels:
+        service: http
+        type: scan
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "http:scan"
+        label: "Gateway unknown-host scan"
 
   parsers:
     s01-parse:
@@ -317,6 +379,15 @@ agent:
       memory: 250Mi
   # Talos: no docker socket. /var/log/containers is CRI-only.
   hostVarLog: true
+  # Agent-side metrics (cs_buckets, cs_bucket_overflowed_total, cs_parser_*,
+  # cs_filesource_hits_total) for the CrowdSec Grafana dashboard. Alloy picks
+  # the ServiceMonitor up and writes it to GreptimeDB.
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: prometheus-stack
 
 appsec:
   enabled: false

@@ -1,0 +1,40 @@
+---
+# Catch-all for plain-HTTP requests whose Host matches no other route (vhost
+# scanners probing payment.*, workspace.*, raw IPs, ...). Without it Envoy
+# answers 404 "no route" before any filter runs, so the CrowdSec bouncer never
+# sees these requests and a banned IP can keep scanning.
+#
+# Attached to the port-80 `http` listener only (no hostname there), so no
+# certificate is needed; the per-host HTTPS listeners are untouched. Exact-host
+# routes always win over a route without hostnames. The 308 redirect to https
+# is what the custom/gateway-unknown-host-scan scenario counts.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: unknown-host
+  namespace: crowdsec
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: kube-system
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: GRPC
+            grpc: {}
+            backendRef:
+              group: ""
+              kind: Service
+              name: envoy-crowdsec-bouncer
+              namespace: crowdsec
+              port: 8080
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 308

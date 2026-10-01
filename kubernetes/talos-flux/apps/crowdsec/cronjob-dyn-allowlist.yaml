@@ -1,0 +1,111 @@
+---
+# Keeps the CrowdSec allowlist `dyn-home` in sync with the current IPv6 address
+# of dyn.${SECRET_DOMAIN} (home connection, dynamic DNS). Allowlisted IPs never
+# get a decision and are filtered out of the bouncer stream. The job resolves
+# the AAAA record inside the LAPI pod and edits the allowlist with cscli there
+# (kubectl exec), so no CrowdSec credentials are needed in this pod. IPv6 only:
+# dyn.${SECRET_DOMAIN} has no A record.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dyn-allowlist
+  namespace: crowdsec
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dyn-allowlist
+  namespace: crowdsec
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dyn-allowlist
+  namespace: crowdsec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dyn-allowlist
+subjects:
+  - kind: ServiceAccount
+    name: dyn-allowlist
+    namespace: crowdsec
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dyn-allowlist
+  namespace: crowdsec
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 180
+      template:
+        spec:
+          serviceAccountName: dyn-allowlist
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: sync
+              image: docker.io/alpine/k8s:1.37.0
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: DYN_HOST
+                  value: dyn.${SECRET_DOMAIN}
+              command:
+                - sh
+                - -ec
+                - |
+                  POD=$(kubectl -n crowdsec get pod -l k8s-app=crowdsec,type=lapi -o jsonpath='{.items[0].metadata.name}')
+                  lapi() { kubectl -n crowdsec exec "$POD" -- "$@"; }
+                  IP=$(lapi getent ahostsv6 "$DYN_HOST" | awk '$1 ~ /:/ && $1 !~ /^::ffff:/ {print $1; exit}')
+                  case "$IP" in
+                    ""|*[!0-9a-f:]*) echo "no usable AAAA record for $DYN_HOST (got '$IP'); allowlist left unchanged"; exit 1 ;;
+                  esac
+                  lapi cscli allowlists create dyn-home -d "$DYN_HOST AAAA (managed by CronJob dyn-allowlist)" >/dev/null 2>&1 || true
+                  CUR=$(lapi cscli allowlists inspect dyn-home -o raw | awk -F, 'NR>1 {print $3}')
+                  for v in $CUR; do
+                    [ "$v" = "$IP/128" ] || { echo "removing stale $v"; lapi cscli allowlists remove dyn-home "$v"; }
+                  done
+                  if echo "$CUR" | grep -qx "$IP/128"; then
+                    echo "$DYN_HOST -> $IP already allowlisted"
+                  else
+                    echo "allowlisting $DYN_HOST -> $IP"
+                    lapi cscli allowlists add dyn-home "$IP/128" -d "$DYN_HOST"
+                  fi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
