@@ -46,10 +46,10 @@ config:
     name: ip_remediation_high_severity
     # CrowdSec alerts carry no severity field, so "high severity" is decided by
     # scenario: credential brute force, exploit/CVE/RCE attempts, backdoors,
-    # SQLi/XSS/path traversal, open-proxy abuse, k8s-audit and ssh scenarios.
+    # SQLi/XSS/path traversal, open-proxy abuse, k8s-audit and Stalwart auth scenarios.
     # Only these notify; the ban is the same as for every other IP alert.
     filters:
-      - 'Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() matches "(?i)(-bf|bruteforce|cve|vmsa|_rce|log4j|spring4shell|backdoors|sqli|xss|path-traversal|open-proxy|k8s-audit|/ssh-|ha-login)"'
+      - 'Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() matches "(?i)(-bf|bruteforce|cve|vmsa|_rce|log4j|spring4shell|backdoors|sqli|xss|path-traversal|open-proxy|k8s-audit|stalwart|ha-login)"'
     decisions:
       - type: ban
         duration: 4h
@@ -139,6 +139,23 @@ config:
         spoofable: 0
         behavior: "http:scan"
         label: "Gateway unknown-host scan"
+    stalwart-auth-bf.yaml: |
+      type: leaky
+      name: custom/stalwart-auth-bf
+      description: "Stalwart authentication brute force (IMAP/POP3/SMTP/JMAP)"
+      filter: "evt.Meta.log_type == 'stalwart_auth_failed'"
+      groupby: evt.Meta.source_ip
+      capacity: 5
+      leakspeed: 30s
+      blackhole: 1m
+      labels:
+        service: stalwart
+        type: bruteforce
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "stalwart:bruteforce"
+        label: "Stalwart Bruteforce"
 
   parsers:
     s01-parse:
@@ -205,6 +222,36 @@ config:
         statics:
           - meta: service
             value: http
+      # Stalwart logs plain text: `<ts> <LEVEL> <message> (<event.id>) k = v, k = "v"`.
+      # Only auth failures and Stalwart's own security bans are parsed; the rest
+      # (mostly DEBUG cache lines) is skipped by the node filter. Behind the
+      # gateway an HTTP login failure carries two remoteIp keys (gateway pod
+      # first, real client from X-Forwarded-For last), so the greedy `.*` picks
+      # the last one. Native IMAP/SMTP/POP3 events carry the client IP directly.
+      stalwart-logs.yaml: |
+        name: custom/stalwart-logs
+        description: "Parse Stalwart mail server auth failures and security events"
+        onsuccess: next_stage
+        filter: "evt.Parsed.program == 'stalwart' && (evt.Parsed.message contains '(auth.failed)' || evt.Parsed.message contains '(security.')"
+        nodes:
+          - grok:
+              pattern: '^%{TIMESTAMP_ISO8601:st_ts} %{LOGLEVEL:st_level} %{DATA:st_msg} \(%{DATA:st_event}\) %{GREEDYDATA:st_kv}$'
+              apply_on: message
+            nodes:
+              - grok:
+                  pattern: '^.*remoteIp = %{IP:st_ip}(?:,.*)?$'
+                  apply_on: st_kv
+                statics:
+                  - meta: service
+                    value: stalwart
+                  - meta: source_ip
+                    expression: evt.Parsed.st_ip
+                  - meta: stalwart_event
+                    expression: evt.Parsed.st_event
+                  - meta: log_type
+                    expression: "evt.Parsed.st_event == 'auth.failed' ? 'stalwart_auth_failed' : 'stalwart_security'"
+                  - target: evt.StrTime
+                    expression: evt.Parsed.st_ts
     s02-enrich:
       # Kubernetes liveness/readiness probes (user-agent `kube-probe/<ver>`)
       # hit nextcloud (/status.php) and imaginary (/health) every few seconds
@@ -335,6 +382,11 @@ agent:
     - namespace: books
       podName: "calibre-web-automated-*"
       program: calibre-web
+    # Stalwart mail server (SMTP/IMAP/POP3 are exposed via the externalIPs
+    # Service, HTTP/JMAP via the gateway).
+    - namespace: mail
+      podName: "stalwart-mail-*"
+      program: stalwart
   # kube-apiserver audit log (Talos writes it to /var/log/audit/kube/ on the
   # node, NOT to /var/log/containers). Feeds the already-enabled
   # k8s-audit-api-server-bruteforce / k8s-audit-service-account-access-denied
@@ -369,6 +421,12 @@ agent:
       value: "crowdsecurity/cri-logs crowdsecurity/http-logs crowdsecurity/k8s-audit LePresidente/authelia-logs LePresidente/grafana-logs"
     - name: COLLECTIONS
       value: "LePresidente/authelia LePresidente/grafana crowdsecurity/nextcloud Jgigantino31/calibre-web crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+    # The image preinstalls crowdsecurity/linux, which pulls in the sshd
+    # collection (parsers + 6 ssh scenarios). Talos has no sshd; remove it.
+    # linux still provides geoip/dateparse enrichment and the good-actor
+    # allowlists.
+    - name: DISABLE_COLLECTIONS
+      value: "crowdsecurity/sshd"
     - name: SCENARIOS
       value: "crowdsecurity/k8s-audit-api-server-bruteforce crowdsecurity/k8s-audit-service-account-access-denied crowdsecurity/nextcloud-bf LePresidente/authelia-bf"
   resources:
