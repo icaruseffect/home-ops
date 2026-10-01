@@ -1,0 +1,113 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crowdsec
+  namespace: crowdsec
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: crowdsec
+      version: "0.24.x"
+      sourceRef:
+        kind: HelmRepository
+        name: crowdsec-charts
+        namespace: flux-system
+      interval: 1h
+  releaseName: crowdsec
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  driftDetection:
+    mode: enabled
+  postRenderers:
+    # The crowdsec chart has no sidecar hook. Inject a tiny UDP syslog relay:
+    # BusyBox syslogd (OpenWrt) sends "<PRI>Mon Sep 21 16:30:50 2026 kern.warn
+    # kernel: ..." which crowdsec's rfc3164 parser rejects (leading weekday).
+    # The relay listens on 30515/UDP directly (hostNetwork), strips the
+    # weekday and the trailing year from the timestamp, and forwards
+    # RFC3164-clean lines to the agent's syslog listener on 127.0.0.1:5514.
+    - kustomize:
+        patches:
+          - target:
+              kind: DaemonSet
+              name: crowdsec-agent
+            patch: |-
+              - op: add
+                path: /spec/template/spec/hostNetwork
+                value: true
+              - op: add
+                path: /spec/template/spec/dnsPolicy
+                value: ClusterFirstWithHostNet
+              - op: add
+                path: /spec/template/spec/containers/-
+                value:
+                  name: syslog-relay
+                  image: python:3.12-alpine
+                  command:
+                    - sh
+                    - -c
+                    - |
+                      python - <<'PYEOF'
+                      import socket, time
+                      # Originally written to fix up BusyBox syslogd's assumed
+                      # "<PRI>Weekday Mon DD HH:MM:SS YYYY facility.level tag[pid]: msg"
+                      # wire format (leading weekday breaks crowdsec's rfc3164 parser).
+                      # Captured live on 2026-09-29 (see incident notes): the router
+                      # actually runs OpenWrt's `logread -r ... -u`, which already sends
+                      # clean, standard RFC3164 - "<PRI>Mon DD HH:MM:SS router tag[pid]:
+                      # msg", no weekday, no year, no facility.level field. That format
+                      # needs no rewriting, so this is now a plain UDP duplicator: fan
+                      # each packet out to crowdsec's listener and to Alloy, unmodified.
+                      rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                      rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                      rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                      # Bound to 5515 to match the Service/Endpoints targetPort (see
+                      # values-crowdsec.yaml) that NodePort 30515 DNATs to.
+                      rx.bind(('0.0.0.0', 5515))
+                      tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                      # Resolved once at startup and reused. Best-effort: a failed or
+                      # skipped send to Alloy here never affects or delays crowdsec's
+                      # own copy below.
+                      alloy_addr = None
+                      for _ in range(30):
+                          try:
+                              alloy_addr = (socket.gethostbyname('alloy-router-syslog.observability.svc.cluster.local'), 1514)
+                              break
+                          except socket.gaierror:
+                              time.sleep(2)
+                      while True:
+                          data, addr = rx.recvfrom(4096)
+                          # dnsmasq lines (~46/min "failed to send packet: Host is
+                          # unreachable") match no parser/scenario, so skip
+                          # crowdsec's copy; Alloy still gets everything.
+                          if b' dnsmasq[' not in data:
+                              tx.sendto(data, ('127.0.0.1', 5514))
+                          # AdGuard query lines are crowdsec-only (Loki already has
+                          # AdGuard's own data via its query log).
+                          if alloy_addr and b' adguardql:' not in data:
+                              try:
+                                  tx.sendto(data, alloy_addr)
+                              except OSError:
+                                  pass
+                      PYEOF
+                  ports:
+                    - name: syslog-relay
+                      containerPort: 5515
+                      protocol: UDP
+                  resources:
+                    requests:
+                      cpu: 5m
+                      memory: 16Mi
+                    limits:
+                      memory: 32Mi
+  valuesFrom:
+    - kind: ConfigMap
+      name: crowdsec-values
+      valuesKey: values-crowdsec.yaml

@@ -1,0 +1,164 @@
+---
+# Forwards AdGuard Home query-log entries to the CrowdSec agent as syslog, so
+# the custom/adguard-* scenarios (see apps/crowdsec/values-crowdsec.yaml) can
+# alert on LAN clients. Polls AdGuard's own HTTP API (no PVC/hostPath access;
+# the API is unauthenticated in this cluster: `users: []`) and sends one compact
+# JSON line per query over UDP to crowdsec-agent-service -> syslog-relay ->
+# agent (the relay keeps these lines out of Alloy/Loki).
+#
+# Lives in the crowdsec namespace with the rest of the CrowdSec stack; it only
+# needs to reach AdGuard's HTTP service in adblock.
+#
+# Start-up skips existing history (no replay). MODE=dump prints the whole API
+# history as syslog lines to stdout instead of sending (used for offline tests).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adguard-querylog-forwarder
+  namespace: crowdsec
+data:
+  forwarder.py: |
+    import datetime, json, os, re, socket, sys, time, urllib.parse, urllib.request
+
+    API = os.environ.get("ADGUARD_URL", "http://adguard-home-http.adblock.svc.cluster.local")
+    DEST_HOST = os.environ.get("SYSLOG_HOST", "crowdsec-agent-service.crowdsec.svc.cluster.local")
+    DEST_PORT = int(os.environ.get("SYSLOG_PORT", "5514"))
+    INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
+    LIMIT = 500
+    MAX_PAGES = 10
+    DUMP = os.environ.get("MODE") == "dump"
+
+    def parse_time(s):
+        # RFC3339 with up to 9 fractional digits; datetime wants <= 6.
+        s = re.sub(r"(\.\d{6})\d+", r"\1", s).replace("Z", "+00:00")
+        return datetime.datetime.fromisoformat(s)
+
+    def fetch(older_than=None):
+        url = f"{API}/control/querylog?limit={LIMIT}"
+        if older_than:
+            url += "&older_than=" + urllib.parse.quote(older_than)
+        with urllib.request.urlopen(url, timeout=15) as r:
+            return json.load(r)
+
+    def line(e):
+        dt = parse_time(e["time"]).astimezone(datetime.timezone.utc)
+        msg = json.dumps({
+            "ip": e["client"],
+            "qh": e["question"]["name"],
+            "qt": e["question"]["type"],
+            "rc": e.get("status", ""),
+            # Filtered* = blocklist / safebrowsing / parental / service block;
+            # Rewrite* and NotFiltered* are not blocks.
+            "f": str(e.get("reason", "")).startswith("Filtered"),
+        }, separators=(",", ":"))
+        # UTC on purpose: crowdsec's syslog parser reads the timestamp as UTC.
+        # Tag must be plain alphanumerics: the RFC3164 parser splits it at the
+        # first "-" ("adguard-querylog" arrives as app "adguard" + "-querylog: ...").
+        return f"<14>{dt:%b} {dt.day:2d} {dt:%H:%M:%S} adguard adguardql: {msg}"
+
+    def key(e):
+        return (e["time"], e["client"], e["question"]["name"], e["question"]["type"])
+
+    def new_entries(seen, watermark):
+        """Newest-first paging until we hit something already seen / too old."""
+        out, older = [], None
+        for _ in range(MAX_PAGES):
+            page = fetch(older)
+            data = page.get("data") or []
+            hit_old = False
+            for e in data:
+                if key(e) in seen or e["time"] <= watermark:
+                    hit_old = True
+                    continue
+                out.append(e)
+            older = page.get("oldest")
+            if hit_old or not data or not older:
+                break
+        out.sort(key=lambda e: e["time"])
+        return out
+
+    if DUMP:
+        older, allrows = None, []
+        for _ in range(1000):
+            page = fetch(older)
+            allrows += page.get("data") or []
+            older = page.get("oldest")
+            if not page.get("data") or not older:
+                break
+        for e in sorted(allrows, key=lambda e: e["time"]):
+            print(line(e))
+        sys.exit(0)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    dest, resolved_at = None, 0.0
+    seen = {}
+    watermark = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "000Z"
+    print(f"forwarding entries newer than {watermark} to {DEST_HOST}:{DEST_PORT}", flush=True)
+    sent = 0
+    while True:
+        try:
+            if dest is None or time.time() - resolved_at > 60:
+                dest = (socket.gethostbyname(DEST_HOST), DEST_PORT)
+                resolved_at = time.time()
+            for e in new_entries(seen, watermark):
+                sock.sendto(line(e).encode(), dest)
+                seen[key(e)] = time.time()
+                watermark = max(watermark, e["time"])
+                sent += 1
+            for k in [k for k, t in seen.items() if time.time() - t > 600]:
+                del seen[k]
+            if sent and sent % 500 < 5:
+                print(f"sent={sent}", flush=True)
+        except Exception as ex:  # keep going: AdGuard restarts, DNS blips
+            print(f"error: {ex!r}", flush=True)
+            time.sleep(10)
+        time.sleep(INTERVAL)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adguard-querylog-forwarder
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: adguard-querylog-forwarder
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: adguard-querylog-forwarder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: adguard-querylog-forwarder
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: forwarder
+          image: python:3.12-alpine
+          command: ["python", "-u", "/app/forwarder.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 96Mi
+      volumes:
+        - name: script
+          configMap:
+            name: adguard-querylog-forwarder

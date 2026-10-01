@@ -1,0 +1,404 @@
+---
+# CrowdSec Helm values for the homelab cluster (chart crowdsec 0.24.x, app v1.8.x).
+# Single-node cluster; no nextcloud/authelia/grafana pod logs worth watching.
+# Router (OpenWrt) logs: `logread -r ... -u` (system.@system[0].log_proto=udp,
+# log_port=30515 in the router's own uci config) streams standard RFC3164 -
+# "<PRI>Mon DD HH:MM:SS router tag[pid]: msg", no weekday/year/facility.level -
+# over UDP to NodePort 30515 -> syslog-relay sidecar (helmrelease
+# postRenderers, now a plain UDP duplicator, no reformatting needed) ->
+# crowdsec agent's native `source: syslog` listener on 127.0.0.1:5514, and
+# fanned out to Alloy's router-syslog listener for Loki/Greptime visibility.
+# (Confirmed live via packet capture 2026-09-29 - see helmrelease.yaml. An
+# earlier version of this comment assumed busybox syslogd's weekday-prefixed
+# local-display format was what hit the wire; it wasn't - `logread -r`
+# already reformats before sending, so no relay-side rewriting was ever
+# needed for this router.)
+container_runtime: containerd
+
+image:
+  repository: crowdsecurity/crowdsec
+  # Pinned; bump deliberately (hub collections are fetched at pod start).
+  tag: v1.8.1
+
+secrets:
+  externalSecret:
+    name: crowdsec-secrets
+    csLapiSecretKey: csLapiSecret
+    registrationTokenKey: registrationToken
+
+config:
+  config.yaml.local: |
+    api:
+      server:
+        auto_registration:
+          enabled: true
+          token: "${REGISTRATION_TOKEN}" # /!\ Do not modify this variable (auto-generated and handled by the chart)
+          allowed_ranges: # Cluster pod/service CIDRs only.
+            - "127.0.0.1/32"
+            - "10.0.0.0/8"
+
+  # Local parser: the busybox wire timestamp carries a trailing year, so the
+  # syslog datasource parses "2026" as the hostname and "kern" as the program
+  # (tag truncated at the dot), leaving "warn kernel: ..." in the message.
+  # Swap back: program <- real tag from the "facility.level tag:" prefix.
+  parsers:
+    s01-parse:
+      00-openwrt-program-normalize.yaml: |
+        onsuccess: continue
+        filter: "evt.Parsed.program == 'kern' && evt.Parsed.message matches '^[a-z]+[.][a-z0-9]+ [^ :]+:'"
+        name: custom/openwrt-program-normalize
+        description: "Fix busybox facility.level tag truncation (program=kern, host=year)"
+        nodes:
+          - grok:
+              # evt.Parsed.message = "kern.warn kernel: real message";
+              # evt.Parsed.logsource = "2026" (the year, misparsed as host)
+              pattern: '^%{DATA:facility_level} %{DATA:openwrt_program}(?:[[]%{NUMBER:openwrt_pid}[]])?: %{GREEDYDATA:openwrt_message}'
+              apply_on: message
+        statics:
+          - target: evt.Parsed.program
+            expression: evt.Parsed.openwrt_program
+          - target: evt.Parsed.pid
+            expression: evt.Parsed.openwrt_pid
+          - target: evt.Parsed.message
+            expression: evt.Parsed.openwrt_message
+          - target: evt.Parsed.logsource
+            value: router
+          - meta: machine
+            value: router
+      # AdGuard query lines from adblock/adguard-querylog-forwarder, arriving via
+      # the same syslog listener as the router: program "adguardql",
+      # message = {"ip","qh","qt","rc","f"}. Deliberately does NOT set source_ip:
+      # the stock crowdsecurity/whitelists parser drops 192.168/16 and would
+      # swallow every LAN client. Clients are keyed on meta client_ip instead
+      # (custom Client scope in the scenarios below, remediation:false).
+      10-adguard-querylog.yaml: |
+        onsuccess: next_stage
+        filter: "evt.Parsed.program == 'adguardql'"
+        name: custom/adguard-querylog
+        description: "Parse AdGuard query lines forwarded as syslog JSON"
+        statics:
+          - meta: log_type
+            value: adguard_query
+          - meta: service
+            value: dns
+          - meta: client_ip
+            expression: JsonExtract(evt.Parsed.message, "ip")
+          - meta: qname
+            expression: JsonExtract(evt.Parsed.message, "qh")
+          - meta: filtered
+            expression: JsonExtract(evt.Parsed.message, "f")
+          - meta: rcode
+            expression: 'JsonExtract(evt.Parsed.message, "rc") == "NXDOMAIN" ? "3" : "0"'
+
+  # Slow-scan companion to the hub's iptables-scan-multi_ports (15 distinct
+  # ports in 5s). Internet background scanners hit ~1 port per IP, so that
+  # scenario never overflows here; this one fires on 6+ distinct ports from one
+  # source within ~2.5h (one item leaks every 30m).
+  scenarios:
+    iptables-slow-scan-multi_ports.yaml: |
+      type: leaky
+      name: custom/iptables-slow-scan-multi_ports
+      description: "Slow TCP port scan against the WAN (6+ distinct ports within ~2.5h)"
+      filter: "evt.Meta.log_type == 'iptables_drop' && evt.Meta.service == 'tcp'"
+      groupby: evt.Meta.source_ip
+      distinct: evt.Parsed.dst_port
+      capacity: 5
+      leakspeed: 30m
+      blackhole: 5m
+      labels:
+        service: tcp
+        type: scan
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "tcp:scan"
+        label: "TCP Slow Scan"
+    # --- AdGuard (LAN clients; alert-only, see lan_alert_only profile). Thresholds
+    # are ~3-5x the per-client peaks seen in 18k queries (181 q/min, 62 unique
+    # names/min, 13 unique NXDOMAIN names/5min, 79 blocked/5min).
+    adguard-dns-flood.yaml: |
+      type: leaky
+      name: custom/adguard-dns-flood
+      description: "LAN client sustaining >10 DNS queries/s (baseline peak ~3/s)"
+      filter: "evt.Meta.log_type == 'adguard_query'"
+      groupby: evt.Meta.client_ip
+      scope:
+        type: Client
+        expression: evt.Meta.client_ip
+      capacity: 600
+      leakspeed: 100ms
+      blackhole: 30m
+      labels:
+        remediation: false
+        service: dns
+        type: flood
+    adguard-nxdomain-burst.yaml: |
+      type: leaky
+      name: custom/adguard-nxdomain-burst
+      description: "LAN client resolving 40+ distinct non-existent names (DGA / DNS tunnel pattern)"
+      filter: "evt.Meta.log_type == 'adguard_query' && evt.Meta.rcode == '3'"
+      groupby: evt.Meta.client_ip
+      scope:
+        type: Client
+        expression: evt.Meta.client_ip
+      distinct: evt.Meta.qname
+      capacity: 40
+      leakspeed: 5s
+      blackhole: 1h
+      labels:
+        remediation: false
+        service: dns
+        type: dga
+    adguard-blocked-burst.yaml: |
+      type: leaky
+      name: custom/adguard-blocked-burst
+      description: "LAN client hitting blocklisted domains at >0.3/s sustained (~300 in 5m)"
+      filter: "evt.Meta.log_type == 'adguard_query' && evt.Meta.filtered == 'true'"
+      groupby: evt.Meta.client_ip
+      scope:
+        type: Client
+        expression: evt.Meta.client_ip
+      capacity: 200
+      leakspeed: 3s
+      blackhole: 1h
+      labels:
+        remediation: false
+        service: dns
+        type: blocked
+
+  # Replaces the chart default; alert routing mirrors talos-flux (order matters):
+  #   lan_alert_only        AdGuard anomalies on LAN clients: notify, never ban
+  #   *_already_blocked     IP already has an active decision: extend ban, silent
+  #   ip_remediation_high_severity   brute force / exploit scenarios: ban + notify
+  #   default_*             everything else (incl. slow port scans): ban, no notification
+  # Ban length grows with the number of earlier decisions on the same IP:
+  # 4h, 8h, 12h ... capped at 7d.
+  profiles.yaml: |
+    name: lan_alert_only
+    # LAN clients (e.g. AdGuard DNS anomalies) must never be banned at the
+    # router - that would cut off your own device. Notify only.
+    filters:
+      - Alert.GetScenario() startsWith "custom/adguard-"
+    decisions: []
+    notifications:
+      - ntfy_default
+    on_success: break
+    ---
+    name: default_ip_remediation_already_blocked
+    # IPs that already have an active decision: still extend the ban (same
+    # escalation as below) but do not notify again.
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip" && GetActiveDecisionsCount(Alert.GetValue()) > 0
+    decisions:
+      - type: ban
+        duration: 4h
+    duration_expr: "Sprintf('%dh', GetDecisionsCount(Alert.GetValue()) >= 41 ? 168 : (GetDecisionsCount(Alert.GetValue()) + 1) * 4)"
+    on_success: break
+    ---
+    name: ip_remediation_high_severity
+    # CrowdSec alerts carry no severity field, so "high severity" is decided by
+    # scenario name (same list as talos-flux): credential brute force,
+    # exploit/CVE/RCE attempts, backdoors, SQLi/XSS/path traversal, open-proxy
+    # abuse. Only these notify; the ban is the same as for every other IP alert.
+    filters:
+      - 'Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() matches "(?i)(-bf|bruteforce|cve|vmsa|_rce|log4j|spring4shell|backdoors|sqli|xss|path-traversal|open-proxy|k8s-audit|stalwart|ha-login)"'
+    decisions:
+      - type: ban
+        duration: 4h
+    duration_expr: "Sprintf('%dh', GetDecisionsCount(Alert.GetValue()) >= 41 ? 168 : (GetDecisionsCount(Alert.GetValue()) + 1) * 4)"
+    notifications:
+      - ntfy_high_severity
+    on_success: break
+    ---
+    name: default_ip_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    duration_expr: "Sprintf('%dh', GetDecisionsCount(Alert.GetValue()) >= 41 ? 168 : (GetDecisionsCount(Alert.GetValue()) + 1) * 4)"
+    on_success: break
+    ---
+    name: default_range_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Range"
+    decisions:
+      - type: ban
+        duration: 4h
+    on_success: break
+
+  # ntfy push for alerts routed to `ntfy_default` (see profiles above).
+  # NTFY_TOKEN / NTFY_URL come from Secret crowdsec-ntfy (lapi.env below).
+  notifications:
+    ntfy.yaml: |
+      type: http
+      name: ntfy_default
+      log_level: info
+      url: ${NTFY_URL}
+      method: POST
+      headers:
+        Authorization: "Bearer ${NTFY_TOKEN}"
+        Title: "CrowdSec (homelab)"
+        Priority: high
+        Tags: warning,shield
+        Content-Type: text/plain
+      format: |
+        {{range . -}}
+        {{.Scenario}}: {{.Source.Value}}{{if .Source.Cn}} ({{.Source.Cn}}){{end}}
+        {{.Message}}
+        {{end -}}
+      timeout: 10s
+    # High-severity IP alerts (brute force, exploits): talos-flux sends these at
+    # priority low, so the same here. ntfy_default stays high for AdGuard.
+    ntfy-high-severity.yaml: |
+      type: http
+      name: ntfy_high_severity
+      log_level: info
+      url: ${NTFY_URL}
+      method: POST
+      headers:
+        Authorization: "Bearer ${NTFY_TOKEN}"
+        Title: "CrowdSec (homelab)"
+        Priority: low
+        Tags: warning,shield
+        Content-Type: text/plain
+      format: |
+        {{range . -}}
+        {{.Scenario}}: {{.Source.Value}}{{if .Source.Cn}} ({{.Source.Cn}}){{end}}
+        {{.Message}}
+        {{end -}}
+      timeout: 10s
+tls:
+  enabled: false
+
+lapi:
+  enabled: true
+  replicas: 1
+  env:
+    # Hub items installed by the LAPI pod; shared with agents via LAPI.
+    - name: COLLECTIONS
+      value: "crowdsecurity/linux crowdsecurity/iptables"
+    - name: ENROLL_INSTANCE_NAME
+      value: "homelab"
+    - name: ENROLL_TAGS
+      value: "k8s linux homelab"
+    - name: ENROLL_KEY
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-secrets
+          key: enrollKey
+    # ntfy token + full topic URL for the ntfy notifications (config.notifications
+    # expands ${NTFY_TOKEN}/${NTFY_URL} from the environment). Both live in the
+    # sops Secret crowdsec-ntfy so the ntfy domain never appears in git. Optional
+    # so the LAPI still starts without them.
+    - name: NTFY_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-ntfy
+          key: token
+          optional: true
+    - name: NTFY_URL
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-ntfy
+          key: url
+          optional: true
+  # The image only stages its data files (GeoLite2, cloudflare/SEO-bot lists) into
+  # an EMPTY data dir. The LAPI data dir is a persistent volume that already
+  # holds crowdsec.db, so link them in on every start (idempotent; never touches
+  # crowdsec.db or a real directory such as trace/). Keep the image tag in sync
+  # with image.tag above - init containers cannot be templated from values.
+  extraInitContainers:
+    - name: link-staged-data
+      image: crowdsecurity/crowdsec:v1.8.1
+      command:
+        - sh
+        - -c
+        - |
+          for f in /staging/var/lib/crowdsec/data/*; do
+            t="/var/lib/crowdsec/data/$(basename "$f")"
+            if [ -L "$t" ] || [ ! -e "$t" ]; then ln -sfn "$f" "$t"; fi
+          done
+      volumeMounts:
+        - name: crowdsec-db
+          mountPath: /var/lib/crowdsec/data
+  persistentVolume:
+    data:
+      enabled: true
+      storageClassName: openebs-hostpath
+      size: 2Gi
+    config:
+      enabled: true
+      storageClassName: openebs-hostpath
+      size: 1Gi
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack
+  resources:
+    requests:
+      cpu: 100m
+      memory: 200Mi
+    limits:
+      memory: 500Mi
+  strategy:
+    type: Recreate
+
+agent:
+  enabled: true
+  # No pod-log acquisition on this cluster.
+  acquisition: []
+  # Native syslog TCP listener inside the agent container.
+  additionalAcquisition:
+    - source: syslog
+      # The chart's SyslogSource schema forbids disable_rfc_parser, and
+      # BusyBox syslogd (OpenWrt) wire format "<PRI>Mon Sep 21 16:30:50 2026
+      # kern.warn kernel: ..." breaks crowdsec's rfc3164 parser (leading
+      # weekday). A syslog-relay sidecar (added via kustomize postRenderers in
+      # helmrelease.yaml) listens on 5515/UDP, strips "Weekday " and the
+      # trailing year from the timestamp, and forwards RFC3164-clean lines to
+      # the agent on localhost:5514.
+      listen_addr: "127.0.0.1"
+      listen_port: 5514
+      labels:
+        type: syslog
+        program: router
+  # Expose the listener container-side and via NodePort so the router
+  # (192.168.8.1) can reach it at <node>:30515.
+  ports:
+    - name: syslog
+      containerPort: 5514
+      protocol: UDP
+  service:
+    type: NodePort
+    ports:
+      - name: syslog
+        port: 5514
+        # targetPort 5515 = syslog-relay sidecar (see helmrelease postRenderers)
+        targetPort: 5515
+        nodePort: 30515
+        protocol: UDP
+  env:
+    # Parsers must be installed on the agent too (its hub is local-only).
+    # iptables-logs parses kernel firewall KV lines (SRC/DPT/PROTO...).
+    # dropbear is NOT reachable externally, so no ssh auth parsing.
+    - name: PARSERS
+      value: "crowdsecurity/iptables-logs"
+    - name: COLLECTIONS
+      value: "crowdsecurity/iptables"
+    - name: SCENARIOS
+      value: "crowdsecurity/iptables-scan-multi_ports"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      memory: 250Mi
+  # Plain host: /var/log is readable on the node. Harmless here; keep for
+  # parity with talos-flux deployment.
+  hostVarLog: true
+
+appsec:
+  enabled: false
