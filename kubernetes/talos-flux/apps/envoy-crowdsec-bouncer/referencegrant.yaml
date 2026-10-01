@@ -1,0 +1,60 @@
+---
+# Lets HTTPRoutes in these namespaces reference the bouncer Service via the
+# ExternalAuth filter. Add a `from` entry per namespace whose routes use it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: bouncer-grpc-from-cloud
+  namespace: crowdsec
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: authelia
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: books
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: cloud
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: default
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: flux-system
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: hoarder
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: mail
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: ntfy
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: observability
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: reader
+  to:
+    - group: ""
+      kind: Service
+      name: envoy-crowdsec-bouncer
+---
+# Home Assistant's route (homeassistant/home-assistant) uses the bouncer too.
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: bouncer-grpc-from-homeassistant
+  namespace: crowdsec
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: homeassistant
+  to:
+    - group: ""
+      kind: Service
+      name: envoy-crowdsec-bouncer

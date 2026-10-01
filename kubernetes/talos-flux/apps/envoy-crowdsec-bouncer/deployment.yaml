@@ -1,0 +1,89 @@
+---
+# Envoy ext_authz CrowdSec bouncer (kdwils/envoy-proxy-crowdsec-bouncer).
+# Replaces crowdsec-cilium-bouncer, which wedged cilium 1.20.2's statedb
+# policy-computation pipeline twice when syncing ~23k ban decisions as CCNP
+# CIDRs. This bouncer enforces per-request inside Envoy via the GEP-1494
+# HTTPRoute ExternalAuth filter and never writes Cilium policy objects.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-crowdsec-bouncer
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: envoy-crowdsec-bouncer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy-crowdsec-bouncer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: envoy-crowdsec-bouncer
+    spec:
+      serviceAccountName: envoy-crowdsec-bouncer
+      containers:
+        - name: bouncer
+          image: ghcr.io/kdwils/envoy-proxy-bouncer:v0.8.1
+          env:
+            # viper: prefix ENVOY_BOUNCER, key path bouncer.lapiUrl →
+            # ENVOY_BOUNCER_BOUNCER_LAPIURL (chart uses the same mapping for
+            # the API key, ENVOY_BOUNCER_BOUNCER_APIKEY).
+            - name: ENVOY_BOUNCER_BOUNCER_LAPIURL
+              value: http://crowdsec-service.crowdsec.svc.cluster.local:8080
+            - name: ENVOY_BOUNCER_BOUNCER_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: crowdsec-bouncer-api
+                  key: api-key
+            - name: ENVOY_BOUNCER_BOUNCER_TICKERINTERVAL
+              value: 60s
+            # Gateway (cilium-envoy) is the only hop in front of the bouncer;
+            # trust its pod IPs so X-Forwarded-For client extraction works.
+            - name: ENVOY_BOUNCER_TRUSTEDPROXIES
+              value: 10.244.0.0/16,fd00::/120
+          ports:
+            - name: grpc
+              containerPort: 8080
+            - name: http
+              containerPort: 8081
+          readinessProbe:
+            grpc:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-crowdsec-bouncer
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: envoy-crowdsec-bouncer
+spec:
+  selector:
+    app.kubernetes.io/name: envoy-crowdsec-bouncer
+  ports:
+    - name: grpc
+      port: 8080
+      targetPort: grpc
+    - name: http
+      port: 8081
+      targetPort: http
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: envoy-crowdsec-bouncer
+  namespace: crowdsec
