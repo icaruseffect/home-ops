@@ -1,0 +1,10 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: greptime
+  namespace: observability
+spec:
+  type: oci
+  url: oci://registry-1.docker.io/greptime
+  interval: 1h

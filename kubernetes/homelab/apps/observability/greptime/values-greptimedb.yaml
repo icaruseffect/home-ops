@@ -1,0 +1,73 @@
+---
+image:
+  registry: docker.io
+  repository: greptime/greptimedb
+  # Pin explicitly — do not inherit a beta appVersion from the chart.
+  tag: v1.1.0
+
+# Single-node: local PVC, no object storage backend.
+objectStorage: {}
+
+persistence:
+  enabled: true
+  storageClass: openebs-hostpath
+  size: 10Gi
+  mountPath: /data/greptimedb
+
+# Size limit: the 10Gi PVC above caps disk, and a 14-day TTL caps retention so
+# ingested logs actually get pruned instead of growing unbounded. GreptimeDB
+# has no chart value for database-level TTL, so it's set (and enforced) live:
+#   ALTER DATABASE public SET 'ttl' = '14d';
+# This applies to every table in `public` (present and future, e.g.
+# container_logs), inherited automatically at compaction time — confirmed via
+# `SHOW CREATE TABLE container_logs` after running it. Re-run this after any
+# `helm uninstall`/PVC recreate, since it's live DB state, not chart config.
+
+dataHome: /data/greptimedb/
+
+# Keep logs out of the PVC; let your log shipper handle stdout.
+logging:
+  level: info
+  format: json
+  onlyLogToStdout: true
+
+service:
+  type: ClusterIP
+
+# Trimmed for a single 12GB-RAM node already running everything else in homelab.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Emit a PodMonitor so kube-prometheus-stack scrapes Greptime itself.
+monitoring:
+  enabled: true
+  interval: 30s
+  labels:
+    release: kube-prometheus-stack
+
+podSecurityContext:
+  fsGroup: 10001
+  runAsUser: 10001
+  runAsGroup: 10001
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# Mito engine caches scaled down to fit inside the 1Gi memory limit above.
+# Verify key names against the config docs for your pinned version; they have
+# shifted between releases.
+configToml: |
+  [[region_engine]]
+  [region_engine.mito]
+  global_write_buffer_size = "64MB"
+  global_write_buffer_reject_size = "128MB"
+  sst_meta_cache_size = "16MB"
+  vector_cache_size = "16MB"
+  page_cache_size = "32MB"

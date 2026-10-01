@@ -1,0 +1,62 @@
+---
+alloy:
+  configMap:
+    create: false
+    name: alloy-config
+    key: config.alloy
+
+  clustering:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      # Bounded so a discovery/relabel spike (e.g. a namespace-churn burst)
+      # can't take a full core uncontested on a node already at 75% CPU
+      # requests — see the disk-I/O incident notes in config.alloy.
+      cpu: 500m
+      memory: 256Mi
+
+  storagePath: /tmp/alloy
+
+  mounts:
+    # storagePath backs component WAL/positions state (e.g. loki.write's
+    # WAL). The chart's default /tmp is the container's writable overlay
+    # layer, which is disk-backed on this node — a stuck write-retry loop
+    # there (as happened 2026-09-29 with the GreptimeDB log pipeline) reads
+    # its own WAL back at hundreds of MB/s and starves etcd's fsync on the
+    # same disk, crash-looping kube-apiserver. Backing it with tmpfs keeps
+    # that I/O off disk; sizeLimit bounds it so a runaway WAL hits an OOM
+    # kill instead of taking the node's disk down again.
+    extra:
+      - name: alloy-storage
+        mountPath: /tmp/alloy
+
+controller:
+  type: daemonset
+  replicas: 1
+
+  volumes:
+    extra:
+      - name: alloy-storage
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Mi
+
+rbac:
+  create: true
+  # Chart default (rbac.create: true with no rules/clusterRules) renders an
+  # empty ClusterRole. loki.source.kubernetes needs pods/log to tail
+  # container logs via the Kubernetes API.
+  clusterRules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "namespaces"]
+      verbs: ["get", "list", "watch"]
+
+crds:
+  create: false
+
+serviceMonitor:
+  enabled: false
