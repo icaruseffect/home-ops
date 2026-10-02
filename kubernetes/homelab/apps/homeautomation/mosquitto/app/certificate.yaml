@@ -1,0 +1,20 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mosquitto-tls
+  namespace: mosquitto
+spec:
+  secretName: mosquitto-tls
+  dnsNames:
+    # - ${app_url}
+    - mosquitto.mosquitto
+    - mqtt.lab.lab
+    - mqtt.lan
+  ipAddresses:
+    - 192.168.1.8
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days
+  issuerRef:
+    kind: ClusterIssuer
+    name: ca-issuer
