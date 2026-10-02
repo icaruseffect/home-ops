@@ -38,9 +38,9 @@ service:
 resources:
   requests:
     cpu: 100m
-    memory: 256Mi
+    memory: 192Mi
   limits:
-    memory: 1Gi
+    memory: 768Mi
 
 # Emit a PodMonitor so kube-prometheus-stack scrapes Greptime itself.
 monitoring:
