@@ -311,9 +311,9 @@ podDisruptionBudget:
 resources:
   requests:
     cpu: 250m
-    memory: 1Gi
+    memory: 1536Mi
   limits:
-    memory: 4Gi
+    memory: 2560Mi
 volumes:
   - name: scripts-dir
     emptyDir: {}
