@@ -10,8 +10,10 @@ client -> cilium-gateway (talos-flux) -> CrowdSec ext_authz
 ```
 
 Files here: `namespace.yaml`, `backend.yaml` (selectorless Service + EndpointSlice),
-`certificate.yaml`, `referencegrants.yaml`, `httproute.yaml`. Apply with `${SECRET_DOMAIN}` substituted
-(kustomize-controller is off): `SECRET_DOMAIN=klingel.cloud envsubst < file | kubectl apply -f -`.
+`referencegrants.yaml`, `httproute.yaml`. The listener and certificate live with the other gateway
+hosts in `kubernetes/talos-flux/apps/kube-system/cilium/gateway/` (`gateway.yaml`, `certificates.yaml`).
+Apply with `${SECRET_DOMAIN}` substituted (kustomize-controller is off):
+`SECRET_DOMAIN=klingel.cloud envsubst < file | kubectl apply -f -`.
 
 ## Design decisions
 
@@ -43,21 +45,8 @@ Files here: `namespace.yaml`, `backend.yaml` (selectorless Service + EndpointSli
 Applied with `kubectl patch` because their source files are uncommitted work in the main checkout.
 Until added there, re-applying those files will drop them.
 
-1. **Gateway listener** (`kubernetes/talos-flux/apps/kube-system/cilium/gateway/gateway.yaml`):
-
-   ```yaml
-   - name: https-ha.${SECRET_DOMAIN}
-     hostname: ha.${SECRET_DOMAIN}
-     protocol: HTTPS
-     port: 443
-     allowedRoutes:
-       namespaces:
-         from: All
-     tls:
-       mode: Terminate
-       certificateRefs:
-         - name: gw-ha.${SECRET_DOMAIN}-tls
-   ```
+1. **Gateway listener** `https-ha.${SECRET_DOMAIN}` and **certificate** `gw-ha.${SECRET_DOMAIN}-tls`:
+   now tracked in `gateway.yaml` / `certificates.yaml` (gateway dir), no longer live-only.
 
 2. **Authelia** (HelmRelease values `configMap.identity_providers.oidc.clients[Home Assistant].redirect_uris`):
    add `https://ha.${SECRET_DOMAIN}/auth/openid/callback`. (A `two_factor` access-control rule for

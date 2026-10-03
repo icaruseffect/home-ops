@@ -218,3 +218,14 @@ spec:
         mode: Terminate
         certificateRefs:
           - name: gw-velo-gui.${SECRET_DOMAIN}-tls
+    - name: https-ha.${SECRET_DOMAIN}
+      hostname: ha.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-ha.${SECRET_DOMAIN}-tls
