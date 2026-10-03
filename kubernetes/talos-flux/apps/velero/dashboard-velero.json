@@ -1,0 +1,171 @@
+{
+  "title": "Velero Backups",
+  "uid": "velero-backups",
+  "tags": ["velero", "backup"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Backup location available",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (backup_location_name) (velero_backup_location_status_gauge)",
+          "legendFormat": "{{backup_location_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "UNAVAILABLE", "color": "red" },
+                "1": { "text": "Available", "color": "green" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Time since last successful backup",
+      "description": "Per schedule. Manual backups appear with an empty schedule label. Red above 36h.",
+      "gridPos": { "h": 4, "w": 9, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max by (schedule) (velero_backup_last_successful_timestamp)",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 90000 },
+              { "color": "red", "value": 129600 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Failed / partially failed (24h)",
+      "gridPos": { "h": 4, "w": 9, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(velero_backup_failure_total[24h]))",
+          "legendFormat": "failed"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(velero_backup_partial_failure_total[24h]))",
+          "legendFormat": "partial"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Backups per hour by outcome",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(velero_backup_success_total[1h]))",
+          "legendFormat": "success"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(velero_backup_partial_failure_total[1h]))",
+          "legendFormat": "partial failure"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(increase(velero_backup_failure_total[1h]))",
+          "legendFormat": "failure"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Average backup duration",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (schedule) (increase(velero_backup_duration_seconds_sum[1h])) / sum by (schedule) (increase(velero_backup_duration_seconds_count[1h]))",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Items in last backup",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (schedule) (velero_backup_items_total)",
+          "legendFormat": "{{schedule}} total"
+        },
+        {
+          "refId": "B",
+          "expr": "max by (schedule) (velero_backup_items_errors)",
+          "legendFormat": "{{schedule}} errors"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "node-agent / velero memory (working set)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"velero\", container!=\"\"})",
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+---
+version: v1
+volumePolicies:
+  # PVCs labelled backup.klingel.cloud/skip=true are never fs-backed-up:
+  # Postgres (covered by CNPG/barman), regenerable data (metrics, redis, models, indexes).
+  - conditions:
+      pvcLabels:
+        backup.klingel.cloud/skip: "true"
+    action:
+      type: skip

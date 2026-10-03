@@ -1,0 +1,38 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# cloud-credentials (Secret) is pre-existing in the cluster and not managed here.
+resources:
+  - namespace.yaml
+  - vmware-tanzu-charts.yaml
+  - helmrelease.yaml
+  - schedule-daily.yaml
+  - schedule-nextcloud.yaml
+
+configMapGenerator:
+  - name: velero-helm-values
+    files:
+      - velero-values.yaml
+    options:
+      disableNameSuffixHash: true
+  - name: backup-volume-policy
+    files:
+      - policy.yaml
+    options:
+      disableNameSuffixHash: true
+  - name: node-agent-config
+    files:
+      - node-agent-config.json
+    options:
+      disableNameSuffixHash: true
+  # picked up by the grafana dashboard sidecar (label), data comes from GreptimeDB via Alloy
+  - name: velero-grafana-dashboard
+    files:
+      - velero.json=dashboard-velero.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: Backup

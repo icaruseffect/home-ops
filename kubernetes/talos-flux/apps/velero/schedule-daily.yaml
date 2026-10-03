@@ -1,0 +1,30 @@
+---
+# Base schedule: every namespace except `cloud` (Nextcloud has its own schedule, see
+# schedule-nextcloud.yaml). PVCs labelled backup.klingel.cloud/skip=true are skipped
+# via the shared volume policy.
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: daily
+  namespace: velero
+spec:
+  schedule: 30 3 * * * # after the CNPG backups (02:30 / 03:00)
+  paused: false
+  skipImmediately: true
+  useOwnerReferencesInBackup: false
+  template:
+    includedNamespaces:
+      - "*"
+    excludedNamespaces:
+      - cloud
+    storageLocation: default
+    snapshotVolumes: false
+    defaultVolumesToFsBackup: true
+    resourcePolicy:
+      kind: configmap
+      name: backup-volume-policy
+    ttl: 720h0m0s
+    itemOperationTimeout: 0s
+    csiSnapshotTimeout: 0s
+    hooks: {}
+    metadata: {}

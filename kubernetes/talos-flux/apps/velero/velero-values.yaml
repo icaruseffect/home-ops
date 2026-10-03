@@ -1,0 +1,119 @@
+---
+# Velero chart 12.x (vmware-tanzu-charts) -- kopia uploader, backups to Contabo bucket backup-cloud.
+# Defaults for everything not listed here are the chart defaults.
+image:
+  repository: velero/velero
+  tag: v1.18.4
+  pullPolicy: IfNotPresent
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.14.0
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# The Nextcloud data volume (~166 GB) is uploaded by node-agent via kopia; the old
+# 1Gi limit is what destabilised the node under restic. Tune after the first full run.
+deployNodeAgent: true
+nodeAgent:
+  # In Velero 1.18 the kopia uploads run in separate data-mover pods, NOT in the node-agent
+  # container: their limits come from this ConfigMap (node-agent-config.json), else unbounded.
+  extraArgs:
+    - --node-agent-configmap=node-agent-config
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+credentials:
+  useSecret: true
+  existingSecret: cloud-credentials
+
+configuration:
+  uploaderType: kopia
+  # opt-out model: every pod volume is backed up unless its PVC carries
+  # backup.klingel.cloud/skip=true (see policy.yaml, applied via Schedule.resourcePolicy)
+  defaultVolumesToFsBackup: true
+  fsBackupTimeout: 24h
+  defaultItemOperationTimeout: 12h
+  # CSI snapshots are not used (openebs-hostpath has no snapshot support)
+  features: ""
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: backup-cloud
+      prefix: velero
+      default: true
+      credential:
+        name: cloud-credentials
+        key: cloud
+      config:
+        profile: default
+        region: EU
+        s3ForcePathStyle: "true"
+        s3Url: https://eu2.contabostorage.com
+  volumeSnapshotLocation: []
+
+upgradeCRDs: true
+cleanUpCRDs: false
+
+metrics:
+  enabled: true
+  scrapeInterval: 30s
+  scrapeTimeout: 10s
+  serviceMonitor:
+    enabled: true
+    autodetect: true
+    namespace: observability
+    additionalLabels:
+      release: prometheus-stack
+  nodeAgentPodMonitor:
+    enabled: true
+    autodetect: true
+    namespace: observability
+    additionalLabels:
+      release: prometheus-stack
+  prometheusRule:
+    enabled: true
+    autodetect: true
+    namespace: observability
+    additionalLabels:
+      release: prometheus-stack
+    spec:
+      - alert: VeleroBackupPartialFailures
+        annotations:
+          message: Velero backup {{ $labels.schedule }} has {{ $value | humanizePercentage }} partially failed backups.
+        expr: |-
+          velero_backup_partial_failure_total{schedule!=""} / velero_backup_attempt_total{schedule!=""} > 0.25
+        for: 15m
+        labels:
+          severity: warning
+      - alert: VeleroBackupFailures
+        annotations:
+          message: Velero backup {{ $labels.schedule }} has {{ $value | humanizePercentage }} failed backups.
+        expr: |-
+          velero_backup_failure_total{schedule!=""} / velero_backup_attempt_total{schedule!=""} > 0.25
+        for: 15m
+        labels:
+          severity: warning
+      - alert: VeleroNoRecentBackup
+        annotations:
+          message: Velero schedule {{ $labels.schedule }} has had no successful backup for 36h.
+        expr: |-
+          time() - velero_backup_last_successful_timestamp{schedule!=""} > 129600
+        for: 15m
+        labels:
+          severity: warning

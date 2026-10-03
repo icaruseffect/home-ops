@@ -1,0 +1,79 @@
+---
+groups:
+  - name: velero
+    interval: 1m
+    rules:
+      - alert: VeleroBackupFailed
+        expr: max by (schedule) (velero_backup_last_status) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Velero backup failed (schedule: {{ $labels.schedule }})"
+          description: "The last Velero backup for schedule '{{ $labels.schedule }}' (empty = manual) did not succeed."
+
+      - alert: VeleroBackupPartiallyFailed
+        expr: sum by (schedule) (increase(velero_backup_partial_failure_total[1h])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Velero backup partially failed (schedule: {{ $labels.schedule }})"
+          description: "A Velero backup finished with errors in the last hour; some data may be missing."
+
+      - alert: VeleroBackupOverdue
+        expr: time() - max by (schedule) (velero_backup_last_successful_timestamp{schedule="daily"}) > 129600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Velero 'daily' backup overdue"
+          description: "No successful 'daily' backup for {{ $value | humanizeDuration }} (threshold 36h)."
+
+      - alert: VeleroBackupOverdue
+        expr: time() - max by (schedule) (velero_backup_last_successful_timestamp{schedule="nextcloud"}) > 691200
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Velero 'nextcloud' backup overdue"
+          description: "No successful 'nextcloud' backup for {{ $value | humanizeDuration }} (threshold 8d, weekly schedule)."
+
+      # absent() catches schedules that have never produced a success (e.g. still paused)
+      - alert: VeleroScheduleNeverRan
+        expr: absent(velero_backup_last_successful_timestamp{schedule="daily"})
+        for: 36h
+        labels:
+          severity: warning
+          schedule: daily
+        annotations:
+          summary: "Velero 'daily' schedule has no successful backup on record"
+          description: "No velero_backup_last_successful_timestamp for schedule 'daily' for 36h. Paused schedule or Velero not running?"
+
+      - alert: VeleroScheduleNeverRan
+        expr: absent(velero_backup_last_successful_timestamp{schedule="nextcloud"})
+        for: 8d
+        labels:
+          severity: warning
+          schedule: nextcloud
+        annotations:
+          summary: "Velero 'nextcloud' schedule has no successful backup on record"
+          description: "No velero_backup_last_successful_timestamp for schedule 'nextcloud' for 8d. Paused schedule or Velero not running?"
+
+      - alert: VeleroBackupLocationUnavailable
+        expr: min by (backup_location_name) (velero_backup_location_status_gauge) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Velero backup location {{ $labels.backup_location_name }} unavailable"
+          description: "Velero cannot reach the backup storage location (Contabo bucket backup-cloud)."
+
+      - alert: VeleroServerDown
+        expr: absent(up{job="velero"} == 1)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Velero server is not being scraped / is down"
+          description: "No healthy velero target in GreptimeDB for 15m."

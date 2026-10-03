@@ -1,0 +1,30 @@
+---
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: ntfy
+  group_by: ["alertname", "schedule"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+
+receivers:
+  - name: ntfy
+    webhook_configs:
+      # in-cluster service: avoids the public gateway / crowdsec bouncer on the alert path
+      - url: "http://ntfy.ntfy.svc.cluster.local/Monitoring?template=alertmanager"
+        send_resolved: true
+        http_config:
+          # ntfy-secret/token holds the full header value ("Bearer tk_..."); an init container
+          # writes it without the "Bearer " prefix (Alertmanager adds its own) -> else 401.
+          # (http_headers cannot be used: setting "Authorization" there is rejected.)
+          authorization:
+            credentials_file: /etc/alertmanager/creds/token
+
+inhibit_rules:
+  # a down backup location / server explains overdue and failed backups
+  - source_matchers:
+      - alertname =~ "VeleroServerDown|VeleroBackupLocationUnavailable"
+    target_matchers:
+      - alertname =~ "VeleroBackupOverdue|VeleroScheduleNeverRan"

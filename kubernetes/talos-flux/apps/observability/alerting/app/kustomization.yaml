@@ -1,0 +1,22 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+
+resources:
+  - alertmanager.yaml
+  - vmalert.yaml
+
+# changing config/rules rolls the pods (no hash suffix -> names stay stable; restart manually
+# or via reloader if the content changes)
+configMapGenerator:
+  - name: alertmanager-config
+    files:
+      - alertmanager.yml
+    options:
+      disableNameSuffixHash: true
+  - name: vmalert-rules
+    files:
+      - rules-velero.yaml
+    options:
+      disableNameSuffixHash: true

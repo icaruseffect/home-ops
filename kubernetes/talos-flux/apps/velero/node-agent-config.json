@@ -1,0 +1,8 @@
+{
+  "podResources": {
+    "cpuRequest": "200m",
+    "cpuLimit": "2",
+    "memoryRequest": "256Mi",
+    "memoryLimit": "4Gi"
+  }
+}
