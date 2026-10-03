@@ -90,8 +90,8 @@ Until added there, re-applying those files will drop them.
    is `hass.lab.lan` because the route rewrites the host. Lift an accidental ban with
    `cscli decisions delete --ip <ip>` in the `crowdsec-lapi` pod.
 
-5. **homelab Cilium** `devices: [enp0s25, wg0]` (`kubernetes/homelab/apps/kube-system/cilium/app/helm-values.yaml`).
-   Needed so NodePorts answer on `wg0`.
+5. **homelab Cilium** `devices: [enp0s25, wg0]` (`kubernetes/homelab/apps/kube-system/cilium/app/helm-values.yaml`):
+   now tracked in git. Needed so NodePorts answer on `wg0`.
 
 ## Rollback (reverse order)
 

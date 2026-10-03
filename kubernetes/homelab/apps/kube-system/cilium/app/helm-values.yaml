@@ -1,10 +1,16 @@
+---
 ipv4:
   enabled: true
 ipv6:
   enabled: true
 cluster:
   name: homelab
-devices: enp0s25
+# wg0 (infra/terraform/homelab-wireguard) so NodePorts answer on the WireGuard
+# link to talos-flux. Changing this restarts the agent; see the incident note in
+# kubernetes/talos-flux/apps/homeassistant/README.md before editing.
+devices:
+  - enp0s25
+  - wg0
 encryption:
   enabled: true
   type: wireguard
