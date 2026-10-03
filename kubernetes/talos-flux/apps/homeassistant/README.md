@@ -54,24 +54,10 @@ Until added there, re-applying those files will drop them.
 
 3. **ClusterIssuer `letsencrypt-production`**: the Ingress solver cannot work on this cluster (no
    Cilium Ingress controller), which would have broken all `gw-*` renewals from 2026-11-15. The
-   `solvers` list was replaced with a single zone-wide Gateway solver (verified with a throwaway
-   certificate):
-
-   ```yaml
-   solvers:
-     - selector:
-         dnsZones: [klingel.cloud]
-       http01:
-         gatewayHTTPRoute:
-           parentRefs:
-             - group: gateway.networking.k8s.io
-               kind: Gateway
-               name: cilium-gateway
-               namespace: kube-system
-               sectionName: http
-   ```
-
-   Previous solvers (rollback): the `ingress` solver with `ingressClassName: cilium` for zone `klingel.cloud`.
+   `solvers` list is now a single zone-wide Gateway (`gatewayHTTPRoute`) solver, verified with a
+   throwaway certificate. Tracked in `cert-manager/cert-manager/issuers/cluster-issuer-production.yaml`.
+   The staging issuer still has the Ingress solver. Rollback: restore the `ingress` solver with
+   `ingressClassName: cilium` for the zone.
 
 4. **CrowdSec scenario** (`kubernetes/talos-flux/apps/crowdsec/values-crowdsec.yaml`, under `config:`,
    before `parsers:`). Home Assistant answers a failed login with HTTP 200, so hub scenarios miss it;

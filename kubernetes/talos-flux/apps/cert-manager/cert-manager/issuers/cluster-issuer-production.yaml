@@ -14,14 +14,18 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-production
     solvers:
+      # Gateway API solver: this cluster has no Cilium Ingress controller any
+      # more, so the former `ingress` solver could never get an address and
+      # renewals would fail. The challenge HTTPRoute attaches to the gateway's
+      # plain-HTTP listener.
       - http01:
-          ingress:
-            ingressClassName: cilium
-            ingressTemplate:
-              metadata:
-                annotations:
-                  io.cilium/lb-ipam-ip-family: ipv4
-                  ingress.cilium.io/force-https: disabled
+          gatewayHTTPRoute:
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: cilium-gateway
+                namespace: kube-system
+                sectionName: http
         selector:
           dnsZones:
             - "${SECRET_DOMAIN}"
