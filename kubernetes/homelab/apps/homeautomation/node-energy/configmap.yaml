@@ -1,0 +1,123 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-energy-script
+data:
+  publish.sh: |
+    #!/bin/sh
+    # Publishes node power/energy to Home Assistant via MQTT discovery.
+    #   - CPU package + DRAM energy (kWh) and power (W) from the Intel RAPL counters
+    #   - "Total" energy/power for the whole node: RAPL + BASELINE_W (a constant for
+    #     everything RAPL cannot see: display, SSD, fans, NIC, PSU losses ...).
+    #     While the notebook runs on battery, the battery's measured discharge
+    #     power replaces that estimate for the power sensor (it is the real draw).
+    #   - battery capacity / status / power (+ = discharging, - = charging)
+    # A notebook on AC has no whole-system meter; the total is an estimate.
+    set -eu
+
+    NODE="${NODE_NAME}"
+    SLUG="$(echo "$NODE" | tr -c 'a-zA-Z0-9\n' '_')"
+    PREFIX="homeassistant"
+    BASE="nodeenergy/${NODE}"
+    SYS="/host/sys"
+    RAPL="${SYS}/class/powercap/intel-rapl:0"
+    INTERVAL="${INTERVAL:-30}"
+    BASELINE_W="${BASELINE_W:-0}"
+
+    mqtt() {
+      mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" --cafile /ca/root-certs.pem \
+        -u "$MQTT_USERNAME" -P "$MQTT_PASSWORD" -i "node-energy-${SLUG}" "$@"
+    }
+
+    # Fail loudly (pod restarts / CrashLoop) instead of silently publishing nothing.
+    [ -r "$RAPL/energy_uj" ] || { echo "no readable RAPL counter at $RAPL" >&2; exit 1; }
+
+    BAT=""
+    for b in "$SYS"/class/power_supply/BAT*; do
+      [ -r "$b/energy_full" ] && [ "$(cat "$b/energy_full")" -gt 0 ] && { BAT="$b"; break; }
+    done
+    true
+
+    DEVICE="{\"identifiers\":[\"node_energy_${SLUG}\"],\"name\":\"${NODE}\",\"manufacturer\":\"Intel\",\"model\":\"RAPL\"}"
+
+    # disc <id> <name> <topic> <unit> <device_class> <state_class> <precision>
+    disc() {
+      extra=""
+      [ -z "$4" ] || extra="${extra},\"unit_of_measurement\":\"$4\""
+      [ -z "$5" ] || extra="${extra},\"device_class\":\"$5\""
+      [ -z "$6" ] || extra="${extra},\"state_class\":\"$6\",\"suggested_display_precision\":$7"
+      mqtt -r -t "${PREFIX}/sensor/node_energy_${SLUG}_$1/config" -m \
+        "{\"name\":\"$2\",\"unique_id\":\"node_energy_${SLUG}_$1\",\"state_topic\":\"${BASE}/$3\",\"expire_after\":$((INTERVAL * 4)),\"device\":${DEVICE}${extra}}"
+    }
+
+    discover() {
+      disc package_energy "CPU package energy" package/energy kWh energy total_increasing 3
+      disc package_power  "CPU package power"  package/power  W   power  measurement      1
+      disc dram_energy    "DRAM energy"        dram/energy    kWh energy total_increasing 3
+      disc dram_power     "DRAM power"         dram/power     W   power  measurement      1
+      disc total_energy   "Energy (estimated)" total/energy    kWh energy total_increasing 3
+      disc total_power    "Power (estimated)"  total/power     W   power  measurement      1
+      if [ -n "$BAT" ]; then
+        disc battery_capacity "Battery"       battery/capacity %  battery measurement 0
+        disc battery_status   "Battery status" battery/status   ""  ""      ""          0
+        disc battery_power    "Battery power" battery/power    W   power   measurement 1
+      fi
+    }
+
+    PREV_DIR="/tmp/prev"
+    mkdir -p "$PREV_DIR"
+    discover
+    last_discovery=$(date +%s)
+
+    # publish_domain <key> <dir>: sets UJ (counter), W (power, empty on first sample)
+    publish_domain() {
+      UJ=$(cat "$2/energy_uj")
+      kwh=$(awk -v uj="$UJ" 'BEGIN { printf "%.6f", uj / 3.6e12 }')
+      mqtt -t "${BASE}/$1/energy" -m "$kwh"
+      W=""
+      if [ -r "$PREV_DIR/$1" ]; then
+        read -r puj pts < "$PREV_DIR/$1"
+        # A negative delta means the counter wrapped; skip this sample.
+        W=$(awk -v a="$puj" -v b="$UJ" -v t0="$pts" -v t1="$now" \
+          'BEGIN { d = b - a; dt = t1 - t0; if (d >= 0 && dt > 0) printf "%.2f", d / dt / 1e6 }')
+        [ -z "$W" ] || mqtt -t "${BASE}/$1/power" -m "$W"
+      fi
+      echo "$UJ $now" > "$PREV_DIR/$1"
+    }
+
+    while :; do
+      now=$(date +%s)
+      # Re-announce periodically so entities survive HA restarts that lose retained data.
+      if [ $((now - last_discovery)) -ge 3600 ]; then discover; last_discovery=$now; fi
+
+      publish_domain package "$RAPL"; PKG_UJ=$UJ; PKG_W=$W
+      DRAM_UJ=0; DRAM_W=0
+      if [ -r "$RAPL/intel-rapl:0:2/energy_uj" ]; then
+        publish_domain dram "$RAPL/intel-rapl:0:2"; DRAM_UJ=$UJ; DRAM_W=${W:-0}
+      fi
+
+      # RAPL counters and uptime both restart at boot, so the baseline integral
+      # resets together with them (HA treats that as a meter reset).
+      kwh=$(awk -v p="$PKG_UJ" -v d="$DRAM_UJ" -v b="$BASELINE_W" -v up="$(cut -d' ' -f1 /proc/uptime)" \
+        'BEGIN { printf "%.6f", (p + d) / 3.6e12 + b * up / 3.6e6 }')
+      mqtt -t "${BASE}/total/energy" -m "$kwh"
+
+      bat_w=""
+      if [ -n "$BAT" ]; then
+        bstatus=$(cat "$BAT/status")
+        mqtt -t "${BASE}/battery/capacity" -m "$(cat "$BAT/capacity")"
+        mqtt -t "${BASE}/battery/status" -m "$bstatus"
+        bat_w=$(awk -v p="$(cat "$BAT/power_now")" -v s="$bstatus" \
+          'BEGIN { w = p / 1e6; if (s == "Charging") w = -w; else if (s != "Discharging") w = 0; printf "%.2f", w }')
+        mqtt -t "${BASE}/battery/power" -m "$bat_w"
+      fi
+
+      if [ -n "$PKG_W" ]; then
+        # On battery the measured discharge power is the real whole-system draw.
+        total_w=$(awk -v p="$PKG_W" -v d="$DRAM_W" -v b="$BASELINE_W" -v bw="${bat_w:-0}" -v s="${bstatus:-}" \
+          'BEGIN { if (s == "Discharging" && bw > 0) printf "%.2f", bw; else printf "%.2f", p + d + b }')
+        mqtt -t "${BASE}/total/power" -m "$total_w"
+      fi
+      sleep "$INTERVAL"
+    done
