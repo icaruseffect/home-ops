@@ -2,7 +2,6 @@
 # Dedicated Nextcloud backup: weekly, `cloud` namespace only, includes the large
 # nextcloud-nextcloud-data volume (~166 GB). The `daily` schedule excludes the
 # `cloud` namespace, so the two never back up the same objects.
-# Created paused: unpause deliberately after the first full run has been watched.
 apiVersion: velero.io/v1
 kind: Schedule
 metadata:
@@ -10,8 +9,8 @@ metadata:
   namespace: velero
 spec:
   schedule: 30 0 * * 0 # Sundays 00:30, well clear of the 03:30 daily run
-  paused: true
-  skipImmediately: true
+  paused: false
+  skipImmediately: false
   useOwnerReferencesInBackup: false
   template:
     includedNamespaces:

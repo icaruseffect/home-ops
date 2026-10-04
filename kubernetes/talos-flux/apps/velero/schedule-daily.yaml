@@ -10,7 +10,7 @@ metadata:
 spec:
   schedule: 30 3 * * * # after the CNPG backups (02:30 / 03:00)
   paused: false
-  skipImmediately: true
+  skipImmediately: false
   useOwnerReferencesInBackup: false
   template:
     includedNamespaces:
