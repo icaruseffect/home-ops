@@ -3,15 +3,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  # renovate: datasource=github-releases depName=dragonflydb/dragonfly-operator
-  - https://raw.githubusercontent.com/dragonflydb/dragonfly-operator/v1.1.7/manifests/crd.yaml
+  # CRDs and RBAC are managed by the official Helm chart itself
+  # (crds.install/keep, createAggregateRoles) - see helm-release.yaml
+  - dragonfly-operator-git.yaml
   - helm-release.yaml
-  - rbac.yaml
 configMapGenerator:
   - name: dragonfly-dashboard
     files:
       # renovate: datasource=github-releases depName=dragonflydb/dragonfly-operator
-      - dragonfly-dashboard.json=https://raw.githubusercontent.com/dragonflydb/dragonfly-operator/v1.1.7/monitoring/grafana-dashboard.json
+      - dragonfly-dashboard.json=https://raw.githubusercontent.com/dragonflydb/dragonfly-operator/v1.6.1/monitoring/grafana-dashboard.json
 generatorOptions:
   disableNameSuffixHash: true
   annotations:

@@ -1,0 +1,35 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/networking.k8s.io/networkpolicy_v1.json
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dragonfly-cross-namespace-clients
+  namespace: database
+spec:
+  # dragonfly-operator v1.6.1 started creating its own NetworkPolicy
+  # (spec.networkPolicyEnabled, default true) that restricts port 6379 to
+  # same-namespace pods only - correct for the admin port (9999) but it also
+  # cut off every actual cross-namespace client of this cache. NetworkPolicies
+  # are additive, so this just adds back the access those clients need
+  # without touching the operator-managed policy.
+  podSelector:
+    matchLabels:
+      app: dragonfly
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/part-of: dragonfly
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloud
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: authelia
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: open-webui
+      ports:
+        - port: 6379
+          protocol: TCP

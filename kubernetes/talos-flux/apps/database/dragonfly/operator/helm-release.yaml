@@ -1,5 +1,5 @@
 ---
-# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dragonflydb/dragonfly-operator/main/charts/dragonfly-operator/values.schema.json
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -8,11 +8,12 @@ spec:
   interval: 30m
   chart:
     spec:
-      chart: app-template
-      version: 3.4.0
+      # official chart isn't published to a HelmRepository/OCI index, only
+      # in-tree - see dragonfly-operator-git.yaml
+      chart: ./charts/dragonfly-operator
       sourceRef:
-        kind: HelmRepository
-        name: bjw-s-charts
+        kind: GitRepository
+        name: dragonfly-operator
         namespace: flux-system
   install:
     remediation:
@@ -23,81 +24,53 @@ spec:
       strategy: rollback
       retries: 3
   values:
-    controllers:
-      dragonfly-operator:
-        replicas: 1
-        strategy: RollingUpdate
-        containers:
-          app:
-            image:
-              repository: ghcr.io/dragonflydb/operator
-              tag: v1.1.7@sha256:e702d917e7c52f15519253c21caec99a17c35eb280fbf10a7e72ca539d44e307
-            command: ["/manager"]
-            args:
-              - --health-probe-bind-address=:8081
-              - --metrics-bind-address=:8080
-            probes:
-              liveness:
-                enabled: true
-                custom: true
-                spec:
-                  httpGet:
-                    path: /healthz
-                    port: &port 8081
-                  initialDelaySeconds: 15
-                  periodSeconds: 20
-                  timeoutSeconds: 1
-                  failureThreshold: 3
-              readiness:
-                enabled: true
-                custom: true
-                spec:
-                  httpGet:
-                    path: /readyz
-                    port: *port
-                  initialDelaySeconds: 5
-                  periodSeconds: 10
-                  timeoutSeconds: 1
-                  failureThreshold: 3
-            resources:
-              requests:
-                cpu: 10m
-                memory: 100Mi
-              limits:
-                memory: 100Mi
-            securityContext:
-              allowPrivilegeEscalation: false
-              readOnlyRootFilesystem: true
-              capabilities: { drop: ["ALL"] }
-        pod:
-          securityContext:
-            runAsUser: 65534
-            runAsGroup: 65534
-            runAsNonRoot: true
-          topologySpreadConstraints:
-            - maxSkew: 1
-              topologyKey: kubernetes.io/hostname
-              whenUnsatisfiable: DoNotSchedule
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: *app
-    service:
-      app:
-        controller: *app
-        ports:
-          http:
-            port: *port
-          metrics:
-            port: 8080
-    serviceMonitor:
-      app:
-        serviceName: *app
-        endpoints:
-          - port: metrics
-            scheme: http
-            path: /metrics
-            interval: 1m
-            scrapeTimeout: 10s
+    replicaCount: 1
+
     serviceAccount:
-      create: true
       name: *app
+
+    manager:
+      image:
+        repository: ghcr.io/dragonflydb/operator
+        tag: v1.6.1@sha256:3c40e58614836dfafd116c4b119fe601d080b29a95a8189b41f38a48e106f57f
+      resources:
+        requests:
+          cpu: 10m
+          memory: 100Mi
+        limits:
+          memory: 100Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }
+      # Single replica: leader election protects nothing and the operator
+      # exited ("leader election lost", 50+ restarts) whenever the slow API
+      # server missed a lease renewal. A later flag overrides the chart's
+      # hard-coded --leader-elect.
+      extraArgs:
+        - --leader-elect=false
+
+    podSecurityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+      runAsNonRoot: true
+
+    # metrics served in-cluster only via ServiceMonitor, no external access
+    # needed - skip the kube-rbac-proxy sidecar for parity with how every
+    # other app's ServiceMonitor in this repo scrapes plain metrics
+    rbacProxy:
+      enabled: false
+
+    serviceMonitor:
+      enabled: true
+      interval: 1m
+      timeout: 10s
+      labels:
+        release: prometheus-stack
+
+    # chart's own grafanaDashboard.enabled doesn't render via a GitRepository
+    # chart source (dashboards/ isn't picked up the way it is from a
+    # packaged .tgz) - dashboard is provided via kustomization.yaml's
+    # configMapGenerator instead, same as before this migration
+    grafanaDashboard:
+      enabled: false
