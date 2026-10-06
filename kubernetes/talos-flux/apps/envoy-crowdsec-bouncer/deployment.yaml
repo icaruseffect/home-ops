@@ -59,7 +59,10 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: 50m
+              # actual use is ~7m per replica, but the gateway's ext_authz call has a
+              # short timeout and a timeout is treated as a denial (403, flag UAEX):
+              # the CPU weight must be high enough to run promptly on a saturated node
+              cpu: 250m
               memory: 128Mi
             limits:
               memory: 256Mi

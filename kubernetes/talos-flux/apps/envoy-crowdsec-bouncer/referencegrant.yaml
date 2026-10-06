@@ -37,6 +37,9 @@ spec:
       namespace: observability
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      namespace: photos
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       namespace: reader
   to:
     - group: ""
