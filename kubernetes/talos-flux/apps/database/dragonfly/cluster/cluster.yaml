@@ -5,8 +5,11 @@ kind: Dragonfly
 metadata:
   name: dragonfly
 spec:
-  image: ghcr.io/dragonflydb/dragonfly:v1.17.1@sha256:c4e132cbf3630dbb190ca95a48f748c3d8661872f280daaab983b69c88483f5c
-  replicas: 4 # set to the number of nodes in the cluster
+  image: ghcr.io/dragonflydb/dragonfly:v2.0.0@sha256:ba22a11c729cc90e50fbaf527d800defbd2048d4f3a9ef8dfe05c0806cd1e078
+  # single-node cluster - extra replicas would land on the same physical
+  # node, giving zero real HA while doubling memory/CPU pressure. git said 4
+  # but live has run at 1 for a while; aligning git to match.
+  replicas: 1
   env:
     - name: MAX_MEMORY
       valueFrom:
@@ -15,6 +18,17 @@ spec:
           divisor: 1Mi
   args:
     - --maxmemory=$(MAX_MEMORY)Mi
+    # noeviction (the default) means writes start failing once maxmemory is
+    # hit instead of the cache aging out old entries - wrong for a pure
+    # cache backing nextcloud/authelia sessions. cache_mode enables
+    # Dragonfly's LRU-ish eviction near the memory limit. Not exposed via
+    # CONFIG GET/SET - startup flag only.
+    - --cache_mode=true
+    # Dragonfly reserves ~256MiB per proactor thread (4 threads refused to
+    # start: "There are 4 threads, so 1.00GiB are required"). Node memory is
+    # already tight (88% of allocatable committed) and actual usage here is
+    # tiny (46 keys, <1MiB), so bumping maxmemory just to add threads isn't
+    # worth it right now - stay at what 512Mi actually supports.
     - --proactor_threads=2
     - --cluster_mode=emulated
     - --lock_on_hashtags
@@ -22,4 +36,13 @@ spec:
     requests:
       cpu: 100m
     limits:
+      # 1000m was still measurably throttling this: cgroup cpu.stat showed
+      # nr_throttled:18/nr_periods:7777, throttled_usec averaging ~32ms per
+      # event - matching the 30-80ms PING spikes seen in
+      # `redis-cli --latency-history` and the 100-160ms SLOWLOG outliers.
+      # With 2 proactor threads each able to briefly want a full core, 1000m
+      # combined quota gets exhausted mid-burst. 2000m gives each thread real
+      # headroom; CPU overcommit is broadly tolerated on this node (already
+      # 184%), unlike memory.
+      cpu: 2000m
       memory: 512Mi
