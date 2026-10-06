@@ -1,0 +1,314 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: authelia
+  namespace: authelia
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: authelia
+      version: 0.11.22
+      sourceRef:
+        kind: HelmRepository
+        name: authelia-charts
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    pod:
+      kind: Deployment
+      replicas: 1
+      annotations:
+        reloader.stakater.com/auto: "true"
+      resources:
+        requests:
+          cpu: 25m
+          memory: 96Mi
+        limits:
+          memory: 512Mi
+    configMap:
+      theme: "light"
+      default_2fa_method: "webauthn"
+      log:
+        level: "info"
+        format: "json"
+      telemetry:
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+      identity_validation:
+        reset_password:
+          secret:
+            secret_name: "internal-jwt-hmac"
+            path: "identity_validation.reset_password.jwt.hmac.key"
+      session:
+        name: "authelia_session"
+        same_site: "lax"
+        expiration: "12 hours"
+        inactivity: "1 hour"
+        remember_me: "1 month"
+        encryption_key:
+          secret_name: "authelia-secrets"
+          path: "session.encryption.key"
+        cookies:
+          - subdomain: "auth"
+            domain: "klingel.cloud"
+        redis:
+          enabled: true
+          host: "dragonfly.database.svc.cluster.local"
+          port: 6379
+          database_index: 3
+          password:
+            disabled: true
+      storage:
+        encryption_key:
+          secret_name: "authelia-secrets"
+          path: "storage.encryption.key"
+        postgres:
+          enabled: true
+          deploy: false
+          address: "tcp://postgres17-rw.database.svc.cluster.local:5432"
+          database: "authelia"
+          username: "authelia"
+          password:
+            secret_name: "authelia-db-app"
+            path: "password"
+      notifier:
+        disable_startup_check: false
+        smtp:
+          enabled: true
+          identifier: "klingel.cloud"
+          startup_check_address: "auth@klingel.cloud"
+          address: "submission://mail.klingel.cloud:587"
+          sender: "auth@klingel.cloud"
+          username: "auth@klingel.cloud"
+          password:
+            secret_name: "authelia-secrets"
+            path: "notifier.smtp.password"
+      authentication_backend:
+        password_reset:
+          disable: true
+        refresh_interval: "5 minutes"
+        file:
+          enabled: true
+          path: "/secrets/authelia-users/users_database.yml"
+          watch: true
+          search:
+            email: true
+            case_insensitive: true
+      access_control:
+        default_policy: "one_factor"
+        rules:
+          - domain: "cloud.klingel.cloud"
+            policy: "two_factor"
+      webauthn:
+        disable: false
+        enable_passkey_login: true
+        experimental_enable_passkey_upgrade: true
+        experimental_enable_passkey_uv_two_factors: true
+      identity_providers:
+        oidc:
+          enabled: true
+          claims_policies:
+            legacy_id_token:
+              id_token:
+                ["email", "email_verified", "preferred_username", "name"]
+            with_groups:
+              id_token:
+                [
+                  "email",
+                  "email_verified",
+                  "preferred_username",
+                  "name",
+                  "groups",
+                ]
+          hmac_secret:
+            secret_name: "authelia-secrets"
+            path: "identity_providers.oidc.hmac.key"
+          jwks:
+            - key_id: "f66d03a8354add45a45f9cd352ded22c"
+              algorithm: "RS256"
+              use: "sig"
+              key:
+                path: "/secrets/oidc-jwt/oidc-jwt.key"
+          lifespans:
+            access_token: "5 minutes"
+            refresh_token: "30 days"
+
+          clients:
+            - client_id: "8D0APXzYRl3p2krrEu067O3lNHVCPE7EThLzdGuD"
+              client_name: "Nextcloud"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.nextcloud.client_secret"
+              public: false
+              redirect_uris:
+                - "https://cloud.klingel.cloud/apps/user_oidc/code"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "two_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_post"
+            - client_id: "qIonWH3mbwS8n9uhdshKkSl05IN1wAFfBOZOTGPD"
+              client_name: "Noodle Gallery"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.noodle-gallery.client_secret"
+              public: false
+              redirect_uris:
+                - "https://photos.klingel.cloud/auth/login"
+                - "https://photos.klingel.cloud/user-settings"
+                - "app.immich:///oauth-callback"
+              scopes: ["openid", "profile", "email"]
+              grant_types: ["authorization_code"]
+              authorization_policy: "two_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_post"
+            - client_id: "hMRFLMPoH3s8E9Ir728L76O4RdbcGyHkHG7HWIW3"
+              client_name: "Miniflux"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.miniflux.client_secret"
+              public: false
+              redirect_uris:
+                - "https://reader.klingel.cloud/oauth2/oidc/callback"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "H2ZlicZXpaQojcmfDFQdAsG1NIRkB5UZtpwSQ1b2"
+              client_name: "Open WebUI"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.open-webui.client_secret"
+              public: false
+              redirect_uris:
+                - "https://chat.klingel.cloud/oauth/oidc/callback"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "S6qBYTjUtqcpItGmutya3q6Qd2VXcH2TdvBtpLF8"
+              client_name: "Grafana"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.grafana.client_secret"
+              public: false
+              redirect_uris:
+                - "https://grafana.klingel.cloud/login/generic_oauth"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "aY9QgCoTeZ0574BfcwFBZPUFrQRYFLiaH7XoOrCC"
+              client_name: "Hoarder"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.hoarder.client_secret"
+              public: false
+              redirect_uris:
+                - "https://hoarder.klingel.cloud/api/auth/callback/custom"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+              claims_policy: "legacy_id_token"
+            - client_id: "T5f7NaQsP0VxpuxTrs7CywHLvxx7DjJS4SM7Bilc"
+              client_name: "Velociraptor"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.velociraptor.client_secret"
+              public: false
+              redirect_uris:
+                - "https://velo-gui.klingel.cloud/auth/oidc/callback"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "JUElU4AqUEreHMnz1svlgKrxSsI25pzc8dagfEUK"
+              client_name: "Calibre-Web Automated"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.calibre-web.client_secret"
+              public: false
+              redirect_uris:
+                - "https://books.klingel.cloud/login/generic/authorized"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "k6dLTKJ7lFHn3PLw2m2dR9whhUJT451lldRaN0VF"
+              client_name: "Terminagent"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.terminagent.client_secret"
+              public: false
+              redirect_uris:
+                - "https://termine.klingel.cloud/auth/callback"
+              scopes: ["openid", "groups", "profile", "email"]
+              consent_mode: "implicit"
+              claims_policy: "legacy_id_token"
+              token_endpoint_auth_method: "client_secret_basic"
+              authorization_policy: "one_factor"
+            - client_id: "0rw6h5CMKcpd9Nnuj30uhzb8i1z2XPPDEzd68iJuaVX"
+              client_name: "Paperless-ngx"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.paperless.client_secret"
+              public: false
+              redirect_uris:
+                - "https://paperless.lab.lan/accounts/oidc/authelia/login/callback/"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "1tPTME56RdEUPHqhViaXBy1czk8p53Kt3vhVQlemKH6"
+              client_name: "Home Assistant"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.home-assistant.client_secret"
+              public: false
+              redirect_uris:
+                - "https://hass.lab.lan/auth/openid/callback"
+              scopes: ["openid", "groups", "profile", "email"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+            - client_id: "iIXwMTYQGjVUdTFSQXSaW1PuFqBWznSeaQoK5euF"
+              client_name: "Harbor"
+              client_secret:
+                path: "/secrets/authelia-secrets/identity_providers.oidc.clients.harbor.client_secret"
+              public: false
+              redirect_uris:
+                - "https://harbor.lab.lan/c/oidc/callback"
+              scopes: ["openid", "offline_access", "email", "profile", "groups"]
+              grant_types: ["authorization_code", "refresh_token"]
+              authorization_policy: "one_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+              claims_policy: "with_groups"
+            - client_id: "eB6FyDOKdI4L2XAImSXp1DempgLb9sIdl5xpOtZf"
+              client_name: "Actual Budget"
+              client_secret:
+                path: "/secrets/authelia-actual/client_secret"
+              public: false
+              redirect_uris:
+                - "https://actual.lab.lan/openid/callback"
+              scopes: ["openid", "profile", "email"]
+              grant_types: ["authorization_code"]
+              authorization_policy: "two_factor"
+              consent_mode: "implicit"
+              token_endpoint_auth_method: "client_secret_basic"
+    secret:
+      existingSecret: "authelia-secrets"
+      additionalSecrets:
+        authelia-secrets: {}
+        authelia-db-app: {}
+        oidc-jwt: {}
+        internal-jwt-hmac: {}
+        authelia-users: {}
+        authelia-actual: {}

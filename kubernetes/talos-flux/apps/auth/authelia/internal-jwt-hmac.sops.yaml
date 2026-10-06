@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: internal-jwt-hmac
+  namespace: authelia
+type: Opaque
+stringData:
+  identity_validation.reset_password.jwt.hmac.key: ENC[AES256_GCM,data:7cPH3AUtiILIliZRNIPvpfQsUVmGtUHXlUciFrEPV1d7BTYxwIZea9lnLg32wAb6BwSsnL+qchfQ8KK32Su6JQ==,iv:2vYE5zG/79q7NOSvOEyliFMFOtjw9cL/wqBZVZCCpYI=,tag:+0NjHGeY1jVUemB0QzB7TQ==,type:str]
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBlUmlvemZYUzV0cXFkQ2dE
+        SmtrVVo5QitOblhTZ0RsYjlzVWdZVUFOdEMwCmdJZmVKbkVFMWFVdVlTSTAvYnVQ
+        ZXA1TDZCaFdSWUptc2krNVVNWFdqNWsKLS0tIGVLVG9lU2JKNTJMRlZuQjJwcXds
+        aGpHVnZvT0ZFdE5kZm9ZblZkSWFlNzgKrvhcq+1YG7tSratD9NYyaGOty4xWpuPy
+        /h/nIF2tku48pSngYxGdXzZYrMkiQIRB1aEflnvqyM9qceESXiTzoA==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-09-16T11:59:29Z"
+  mac: ENC[AES256_GCM,data:okq603aeCXYxzQto5rfS3TzKeIuBPLjxtvY1IUVREJeOpvQRTGq/we1VhOSxbLYdXg76075nFGFZoGN/ys7/3y450NvFQjHAn6YQTwcGGNTvyWMIGR7KD8prY8+7EdB7056Eg+TfiiU45bY/hVpEnaYMgZ05VBk+qsm+M/ic8No=,iv:IKrIVS2Q5ok/QSMMouUbhsITMPGLt3D0nTU/+88zn4I=,tag:T8DBJ5DOnu0SeggVV28DMg==,type:str]
+  version: 3.13.3

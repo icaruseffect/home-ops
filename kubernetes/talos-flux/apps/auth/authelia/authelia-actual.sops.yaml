@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: authelia-actual
+  namespace: authelia
+type: Opaque
+stringData:
+  client_secret: ENC[AES256_GCM,data:fODpvndP76qY2x0lc9bJ9Gog/yVz5D4Vhnkps9sP8+Kla/M0o8EquxPoFz1ABZGRXhtQsMEPzkaoLF5S1aH3zchyEBqpERTcFogsZKMChA0k3R8hEFuL3EwQ0Y5Xf3ujSlpily4cdIfbH065+2vqSoof/NWjjJiVSgVE0V1TbNeVua4=,iv:Dfef9GVJ0HVryivc1ehVtk5r8mSKA7kT1+nhX4fwElA=,tag:TiBmzvWyszU+iW29Wub3tQ==,type:str]
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBqTW1YNGhoSHdNem14eWhO
+        VUtJWmVCUEtGa0g2NlBRb1FwVUwzOXQzOGg4Ck5QTHRDemNsZ2JKUUdRK3FDU2Nm
+        QVRVWXd2VVNweml6Tlk3aS9ZcVZyQTAKLS0tIFdEb00vNmVpRXdnQ3BYbWd5NVc3
+        QzlHT284TGpHNnE5SDFDWU0rbFF1QncKSX0N9Q2RbLKXePTfMcMIMI6PB7UTDAPQ
+        owCZECN6Ye5fT+j3JdoyR9GXxkivjPQbQ6sgSYIG5aDlvl3w8z1n9A==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-09-29T23:06:25Z"
+  mac: ENC[AES256_GCM,data:fnCC22Wv2rE4ZVkFJ7jnO7TiQTRk/WhY4x7voOx5JbSC+W4m5JlCB38udapje51wozYIvJO1ya61z7mDfF9p2U25elVF+3IQ265h6sUuZ24wfFDWEwDdmzBRVv4ZhajFfZnp8MwY5pXYv/8m8zO0E1+ghDhHk/CukyIn6jKUsIU=,iv:oZcDZets+XMZZhxrXvSWPM6wN3iZFxAZ5KnXyHs9pf8=,tag:PjdZj19/CiCK+8kPYbIcfA==,type:str]
+  version: 3.13.3

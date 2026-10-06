@@ -1,0 +1,12 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: authelia-database
+  namespace: database
+spec:
+  cluster:
+    name: postgres17
+  name: authelia
+  owner: authelia
+  ensure: present
