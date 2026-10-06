@@ -250,3 +250,16 @@ spec:
     kind: ClusterIssuer
   dnsNames:
     - ha.${SECRET_DOMAIN}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gw-photos.${SECRET_DOMAIN}-tls
+  namespace: kube-system
+spec:
+  secretName: gw-photos.${SECRET_DOMAIN}-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - photos.${SECRET_DOMAIN}

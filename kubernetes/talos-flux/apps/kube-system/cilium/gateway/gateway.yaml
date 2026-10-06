@@ -229,3 +229,14 @@ spec:
         mode: Terminate
         certificateRefs:
           - name: gw-ha.${SECRET_DOMAIN}-tls
+    - name: https-photos.${SECRET_DOMAIN}
+      hostname: photos.${SECRET_DOMAIN}
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gw-photos.${SECRET_DOMAIN}-tls
