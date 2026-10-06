@@ -15,10 +15,12 @@ spec:
         name: cloudnative-pg-charts
         namespace: flux-system
       version: 0.x
+  timeout: 10m # slow node: don't let a 5m wait trigger a rollback
   install:
     remediation:
       retries: 3
   upgrade:
+    disableWait: true
     cleanupOnFail: true
     remediation:
       retries: 3
@@ -27,6 +29,10 @@ spec:
     - name: cloudnative-pg
       namespace: database
   values:
+    # Single replica; the operator exited whenever a lease renewal was missed.
+    # Appended after the chart's hard-coded --leader-elect, so this wins.
+    additionalArgs:
+      - --leader-elect=false
     crds:
       enabled: true
       keep: true

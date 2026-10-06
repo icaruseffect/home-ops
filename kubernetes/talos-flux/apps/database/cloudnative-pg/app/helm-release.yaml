@@ -15,15 +15,22 @@ spec:
         name: cloudnative-pg-charts
         namespace: flux-system
   maxHistory: 15
+  timeout: 10m # slow node: don't let a 5m wait trigger a rollback
   install:
     createNamespace: true
     remediation:
       retries: 3
   upgrade:
+    disableWait: true
     cleanupOnFail: true
     remediation:
       retries: 3
   values:
+    # Operator restarted ~400 times: leader election is lost whenever the slow
+    # API server misses a lease renewal. Defaults are 15s lease / 10s renew.
+    additionalArgs:
+      - --leader-lease-duration=60
+      - --leader-renew-deadline=45
     crds:
       create: true
     monitoring:
