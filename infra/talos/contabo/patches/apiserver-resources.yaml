@@ -1,0 +1,17 @@
+---
+# Reserve CPU for the kube-apiserver static pod (control plane = single node).
+# cgroup v2 CPU weights follow requests: with the default 200m the API server got
+# ~0.23 of 5.95 cores when the node is saturated (it needs ~0.5-0.7 steadily), so
+# lease renewals, port-forward streams and probes time out.
+# 1000m guarantees roughly one core under full contention. Memory request is
+# unchanged (Talos default 512Mi). To free the scheduling room, the crowdsec
+# bouncer requests were reduced in kubernetes/talos-flux/apps/envoy-crowdsec-bouncer.
+#
+# Apply (restarts only the apiserver static pod, no reboot; API unavailable ~30-60s):
+#   talosctl patch machineconfig --patch @patches/apiserver-resources.yaml --mode no-reboot
+cluster:
+  apiServer:
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 512Mi

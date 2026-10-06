@@ -1,0 +1,21 @@
+---
+# Longer leader-election timeouts for kube-controller-manager and kube-scheduler.
+# The API server on this single node sometimes stalls for several seconds (CPU
+# saturated node). With the defaults (lease 15s / renew deadline 10s / retry 2s)
+# one stalled lease renewal makes either component exit ("leaderelection lost"),
+# which showed up as ~50 restarts each. Same reasoning as the Cilium operator
+# change (kubernetes/talos-flux/apps/kube-system/cilium/app/values.yaml).
+#
+# Apply (restarts only these two static pods, no reboot, API stays up):
+#   talosctl patch machineconfig --patch @patches/controlplane-leader-election.yaml --mode no-reboot
+cluster:
+  controllerManager:
+    extraArgs:
+      leader-elect-lease-duration: 60s
+      leader-elect-renew-deadline: 45s
+      leader-elect-retry-period: 5s
+  scheduler:
+    extraArgs:
+      leader-elect-lease-duration: 60s
+      leader-elect-renew-deadline: 45s
+      leader-elect-retry-period: 5s
