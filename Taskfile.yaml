@@ -16,6 +16,7 @@ includes:
   debug: .taskfiles/debug-tasks/Taskfile.yaml
   devenv: .taskfiles/devenv/Taskfile.yaml
   lint: .taskfiles/lint/Taskfile.yaml
+  noodle-ml: .taskfiles/noodle-ml/Taskfile.yaml
   pre-commit: .taskfiles/pre-commit/Taskfile.yaml
   rook-ceph: .taskfiles/rook-ceph/Taskfile.yaml
   talos: .taskfiles/talos/Taskfile.yaml

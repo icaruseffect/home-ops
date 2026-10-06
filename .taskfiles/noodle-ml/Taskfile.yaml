@@ -1,0 +1,153 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+# Remote ML for Noodle Gallery (kubernetes/talos-flux/apps/photos):
+#   laptop GPU (podman, ROCm) <-chisel reverse tunnel<- kubectl port-forward <- tunnel pod in the cluster
+# The cluster reaches the laptop as http://noodle-gallery-ml-remote:3003.
+# The ML container has no authentication: it only listens on 127.0.0.1.
+
+vars:
+  KCTX: klingel.cloud
+  NS: photos
+  ML_NAME: noodle-ml
+  ML_IMAGE: ghcr.io/open-noodle/gallery-ml:v5.7.1-rocm
+  ML_CACHE_VOLUME: noodle-ml-cache
+  TUNNEL_NAME: noodle-ml-tunnel-client
+  TUNNEL_IMAGE: docker.io/jpillora/chisel:1.12.1
+  TUNNEL_SECRET: "{{.ROOT_DIR}}/kubernetes/talos-flux/apps/photos/secret-ml-tunnel.sops.yaml"
+  FORWARD_PORT: "18080"
+  STATE_DIR: "{{if .XDG_RUNTIME_DIR}}{{.XDG_RUNTIME_DIR}}{{else}}/tmp{{end}}/noodle-ml"
+  FORWARD_PID: "{{.STATE_DIR}}/port-forward.pid"
+
+tasks:
+  up:
+    desc: Start the ML container, the port-forward and the reverse tunnel
+    cmds:
+      - task: ml:start
+      - task: forward:start
+      - task: tunnel:start
+      - task: status
+
+  down:
+    desc: Stop the tunnel, the port-forward and the ML container (model cache is kept)
+    cmds:
+      - task: tunnel:stop
+      - task: forward:stop
+      - task: ml:stop
+
+  purge:
+    desc: down, and also delete the model cache volume
+    cmds:
+      - task: down
+      - podman volume rm -f {{.ML_CACHE_VOLUME}}
+
+  status:
+    desc: Show container, port-forward and end-to-end tunnel state
+    ignore_error: true
+    cmds:
+      - podman ps -a --filter name='^({{.ML_NAME}}|{{.TUNNEL_NAME}})$' --format '{{"{{.Names}}"}}\t{{"{{.Status}}"}}'
+      - |
+        if [ -f {{.FORWARD_PID}} ] && ps -p "$(cat {{.FORWARD_PID}})" >/dev/null 2>&1; then
+          echo "port-forward: running (pid $(cat {{.FORWARD_PID}}))"
+        else
+          echo "port-forward: not running"
+        fi
+      - 'echo -n "laptop ML  : "; curl -s -m 5 http://127.0.0.1:3003/ping || echo unreachable; echo'
+      - 'echo -n "from cluster: "; kubectl --context {{.KCTX}} exec -n {{.NS}} deploy/noodle-gallery-server -- curl -s -m 8 http://noodle-gallery-ml-remote:3003/ping || echo unreachable; echo'
+
+  logs:
+    desc: Follow the ML container logs
+    cmds:
+      - podman logs -f --tail 50 {{.ML_NAME}}
+
+  restart:
+    desc: Recreate the ML container (e.g. after changing the image or settings)
+    cmds:
+      - task: ml:stop
+      - task: ml:start
+
+  ml:start:
+    desc: Start the ROCm ML container (GPU, localhost only)
+    preconditions:
+      - sh: command -v podman
+        msg: podman is not installed
+      - sh: test -e /dev/kfd
+        msg: /dev/kfd missing - is the amdgpu/ROCm driver loaded?
+    status:
+      - test "$(podman inspect -f '{{"{{.State.Running}}"}}' {{.ML_NAME}} 2>/dev/null)" = "true"
+    cmds:
+      - podman volume create {{.ML_CACHE_VOLUME}}
+      - podman rm -f {{.ML_NAME}}
+      # HSA_OVERRIDE_GFX_VERSION: gfx1150 (Radeon 890M) is not in the image's supported list.
+      # WORKER_TIMEOUT: compiling a model for the GPU takes longer than the 120s default.
+      # MODEL_TTL=0: keep models loaded; every unload means a recompile.
+      - >-
+        podman run -d --name {{.ML_NAME}} --restart=unless-stopped
+        --device /dev/kfd --device /dev/dri --group-add keep-groups
+        --security-opt seccomp=unconfined
+        -p 127.0.0.1:3003:3003
+        -v {{.ML_CACHE_VOLUME}}:/cache
+        -e MACHINE_LEARNING_WORKERS=1
+        -e MACHINE_LEARNING_MODEL_TTL=0
+        -e MACHINE_LEARNING_WORKER_TIMEOUT=900
+        -e HSA_OVERRIDE_GFX_VERSION=11.0.0
+        {{.ML_IMAGE}}
+      - |
+        for i in $(seq 1 30); do
+          curl -sf -m 2 http://127.0.0.1:3003/ping >/dev/null && exit 0
+          sleep 2
+        done
+        echo "ML container did not answer /ping" >&2; exit 1
+
+  ml:stop:
+    desc: Remove the ML container
+    cmds:
+      - podman rm -f {{.ML_NAME}}
+
+  forward:start:
+    desc: Keep a kubectl port-forward to the tunnel pod (localhost:{{.FORWARD_PORT}}) running in the background
+    status:
+      - test -f {{.FORWARD_PID}} && ps -p "$(cat {{.FORWARD_PID}})" >/dev/null 2>&1
+    cmds:
+      - mkdir -p {{.STATE_DIR}}
+      - >-
+        setsid nohup bash {{.TASKFILE_DIR}}/forward-supervisor.sh
+        {{.KCTX}} {{.NS}} {{.FORWARD_PORT}} {{.FORWARD_PID}}
+        >{{.STATE_DIR}}/port-forward.log 2>&1 &
+      - |
+        for i in $(seq 1 45); do
+          curl -s -o /dev/null -m 2 http://127.0.0.1:{{.FORWARD_PORT}} && exit 0
+          sleep 1
+        done
+        echo "port-forward did not come up, see {{.STATE_DIR}}/port-forward.log" >&2; exit 1
+
+  forward:stop:
+    desc: Stop the background port-forward
+    ignore_error: true
+    cmds:
+      - |
+        if [ -f {{.FORWARD_PID}} ]; then
+          # the supervisor leads its own process group; kill the group so the
+          # kubectl child (which holds the port) goes with it
+          pkill -TERM -g "$(cat {{.FORWARD_PID}})" 2>/dev/null || true
+          rm -f {{.FORWARD_PID}}
+        fi
+
+  tunnel:start:
+    desc: Start the chisel reverse tunnel client (cluster :3003 -> laptop :3003)
+    status:
+      - test "$(podman inspect -f '{{"{{.State.Running}}"}}' {{.TUNNEL_NAME}} 2>/dev/null)" = "true"
+    cmds:
+      - podman rm -f {{.TUNNEL_NAME}}
+      # chisel reads its credentials from the AUTH env var (not CHISEL_AUTH)
+      - |
+        export AUTH="$(sops -d --extract '["stringData"]["CHISEL_AUTH"]' {{.TUNNEL_SECRET}})"
+        podman run -d --name {{.TUNNEL_NAME}} --restart=unless-stopped --network host -e AUTH \
+          {{.TUNNEL_IMAGE}} client --keepalive 25s --max-retry-interval 10s \
+          http://127.0.0.1:{{.FORWARD_PORT}} R:0.0.0.0:3003:127.0.0.1:3003
+
+  tunnel:stop:
+    desc: Remove the chisel client
+    cmds:
+      - podman rm -f {{.TUNNEL_NAME}}
