@@ -1,6 +1,6 @@
 ---
-# Base schedule: every namespace except `cloud` (Nextcloud has its own schedule, see
-# schedule-nextcloud.yaml). PVCs labelled backup.klingel.cloud/skip=true are skipped
+# Base schedule: every namespace except `cloud` and `photos` (Nextcloud and Noodle
+# have their own schedules, see schedule-nextcloud.yaml / schedule-noodle.yaml). PVCs labelled backup.klingel.cloud/skip=true are skipped
 # via the shared volume policy.
 apiVersion: velero.io/v1
 kind: Schedule
@@ -17,6 +17,7 @@ spec:
       - "*"
     excludedNamespaces:
       - cloud
+      - photos
     storageLocation: default
     snapshotVolumes: false
     defaultVolumesToFsBackup: true

@@ -1,0 +1,31 @@
+---
+# Dedicated Noodle Gallery backup: daily, `photos` namespace only. Includes the
+# noodle-library volume (~40 GB of photos/videos plus thumbnails). The `daily`
+# schedule excludes `photos`, so the two never back up the same objects. The
+# database (immich in postgres17) is covered by the CNPG/barman backups, and the
+# Dragonfly queue cache is regenerable. kopia stores changes incrementally, so
+# daily runs after the first full backup are small.
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: noodle
+  namespace: velero
+spec:
+  schedule: 30 5 * * * # after the 03:30 daily run (which takes ~1.5h) and the CNPG backups
+  paused: false
+  skipImmediately: false
+  useOwnerReferencesInBackup: false
+  template:
+    includedNamespaces:
+      - photos
+    storageLocation: default
+    snapshotVolumes: false
+    defaultVolumesToFsBackup: true
+    resourcePolicy:
+      kind: configmap
+      name: backup-volume-policy
+    ttl: 720h0m0s
+    itemOperationTimeout: 0s
+    csiSnapshotTimeout: 0s
+    hooks: {}
+    metadata: {}

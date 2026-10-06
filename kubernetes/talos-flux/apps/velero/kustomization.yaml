@@ -9,6 +9,7 @@ resources:
   - helmrelease.yaml
   - schedule-daily.yaml
   - schedule-nextcloud.yaml
+  - schedule-noodle.yaml
 
 configMapGenerator:
   - name: velero-helm-values
