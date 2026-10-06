@@ -1,0 +1,15 @@
+---
+# Declarative record only: this cluster's CNPG operator does not reconcile
+# Database CRs. The role and database were created manually via psql on the
+# postgres17 primary (extensions: vector, cube, earthdistance; no VectorChord).
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: immich-database-postgres17
+  namespace: photos
+spec:
+  cluster:
+    name: postgres17
+  name: immich
+  owner: immich
+  ensure: present

@@ -1,0 +1,32 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/dragonflydb.io/dragonfly_v1alpha1.json
+# Small dedicated instance for Noodle Gallery's BullMQ queues. Unlike the
+# shared database/dragonfly it runs WITHOUT --cache_mode, so keys are never
+# evicted (writes fail at maxmemory instead of silently dropping jobs).
+apiVersion: dragonflydb.io/v1alpha1
+kind: Dragonfly
+metadata:
+  name: noodle-dragonfly
+  namespace: photos
+spec:
+  image: ghcr.io/dragonflydb/dragonfly:v2.0.0@sha256:ba22a11c729cc90e50fbaf527d800defbd2048d4f3a9ef8dfe05c0806cd1e078
+  replicas: 1
+  env:
+    - name: MAX_MEMORY
+      valueFrom:
+        resourceFieldRef:
+          resource: limits.memory
+          divisor: 1Mi
+  args:
+    - --maxmemory=$(MAX_MEMORY)Mi
+    # one proactor thread needs ~256MiB of the limit
+    - --proactor_threads=1
+    # BullMQ Lua scripts touch undeclared keys (BullMQ's Dragonfly guidance)
+    - --default_lua_flags=allow-undeclared-keys
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi

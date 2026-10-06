@@ -1,0 +1,156 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: noodle-gallery
+  namespace: photos
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: app-template
+      reconcileStrategy: ChartVersion
+      version: ">=4.0.0 <5.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s-charts
+        namespace: flux-system
+  # The server takes longer than Helm's default 5m to become ready on this node
+  # (module load + migrations under CPU contention). Waiting for readiness made
+  # upgrades time out and roll back.
+  timeout: 15m
+  install:
+    disableWait: true
+    remediation:
+      retries: 3
+  upgrade:
+    disableWait: true
+    remediation:
+      retries: 3
+  values:
+    defaultPodOptions:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+
+    controllers:
+      server:
+        type: deployment
+        replicas: 1
+        strategy: Recreate
+        containers:
+          main:
+            image:
+              repository: ghcr.io/open-noodle/gallery-server
+              tag: v5.7.1
+            env:
+              TZ: Europe/Berlin
+              IMMICH_MACHINE_LEARNING_URL: http://noodle-gallery-ml:3003
+              DB_HOSTNAME: postgres17-rw.database.svc.cluster.local
+              # postgres17 ships pgvector only (no VectorChord)
+              DB_VECTOR_EXTENSION: pgvector
+              DB_DATABASE_NAME: immich
+              DB_USERNAME:
+                valueFrom:
+                  secretKeyRef:
+                    name: immich-postgres-app
+                    key: username
+              DB_PASSWORD:
+                valueFrom:
+                  secretKeyRef:
+                    name: immich-postgres-app
+                    key: password
+              REDIS_HOSTNAME: noodle-dragonfly
+              REDIS_PORT: "6379"
+            probes:
+              liveness: &probe
+                enabled: true
+                custom: true
+                spec:
+                  httpGet:
+                    path: /api/server/ping
+                    port: 2283
+                  initialDelaySeconds: 30
+                  periodSeconds: 15
+                  # /api/server/ping can stall for many seconds while thumbnail
+                  # and metadata jobs saturate the 2-CPU limit; a tight probe
+                  # kills a healthy pod and restarts the whole job queue.
+                  timeoutSeconds: 30
+                  failureThreshold: 10
+              readiness: *probe
+              startup:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet:
+                    path: /api/server/ping
+                    port: 2283
+                  failureThreshold: 60
+                  periodSeconds: 10
+            resources:
+              requests:
+                cpu: 100m
+                memory: 512Mi
+              limits:
+                cpu: 2000m
+                memory: 2Gi
+
+      ml:
+        type: deployment
+        # ML is served remotely (laptop GPU via tunnel, task noodle-ml:up)
+        replicas: 0
+        strategy: Recreate
+        containers:
+          main:
+            image:
+              repository: ghcr.io/open-noodle/gallery-ml
+              tag: v5.7.1
+            env:
+              TZ: Europe/Berlin
+              MACHINE_LEARNING_CACHE_FOLDER: /cache
+              # Small CLIP model is chosen in the admin UI
+              # (Smart Search -> ViT-B-32__openai); keep inference gentle on
+              # the CPU-only node.
+              MACHINE_LEARNING_WORKERS: "1"
+              MACHINE_LEARNING_REQUEST_THREADS: "2"
+              MACHINE_LEARNING_MODEL_INTER_OP_THREADS: "1"
+              MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: "2"
+              MACHINE_LEARNING_MODEL_TTL: "300"
+            resources:
+              requests:
+                cpu: 100m
+                memory: 1Gi
+              limits:
+                cpu: 2000m
+                memory: 2Gi
+
+    service:
+      server:
+        controller: server
+        ports:
+          http:
+            port: 2283
+      ml:
+        controller: ml
+        ports:
+          http:
+            port: 3003
+
+    persistence:
+      library:
+        type: persistentVolumeClaim
+        existingClaim: noodle-library
+        advancedMounts:
+          server:
+            main:
+              - path: /data
+      ml-cache:
+        type: emptyDir
+        advancedMounts:
+          ml:
+            main:
+              - path: /cache

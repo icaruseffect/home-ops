@@ -1,0 +1,67 @@
+---
+# Receiving end of a reverse tunnel for a remote ML container (laptop, ROCm).
+# The laptop reaches this pod through `kubectl port-forward` to :8080 and opens
+# a chisel reverse remote that makes this pod listen on :3003, relayed to the
+# laptop's ML container. The cluster only ever sees the Service below.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noodle-ml-tunnel
+  namespace: photos
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: noodle-ml-tunnel
+  template:
+    metadata:
+      labels:
+        app: noodle-ml-tunnel
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: chisel
+          image: docker.io/jpillora/chisel:1.12.1
+          args: ["server", "--reverse", "--port", "8080"]
+          env:
+            - name: AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: noodle-ml-tunnel
+                  key: CHISEL_AUTH
+          ports:
+            - name: control
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+---
+# ClusterIP only: the Noodle server uses http://noodle-gallery-ml-remote:3003.
+# Backends exist only while the laptop tunnel is up.
+apiVersion: v1
+kind: Service
+metadata:
+  name: noodle-gallery-ml-remote
+  namespace: photos
+spec:
+  selector:
+    app: noodle-ml-tunnel
+  ports:
+    - name: ml
+      port: 3003
+      targetPort: 3003

@@ -1,0 +1,15 @@
+---
+# openebs-hostpath does not enforce the requested size; budget ~60-80G on the
+# node disk (library + thumbnails + transcodes).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: noodle-library
+  namespace: photos
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: openebs-hostpath
+  resources:
+    requests:
+      storage: 80Gi
