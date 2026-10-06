@@ -52,6 +52,15 @@ operator:
   replicas: 1
   enabled: true
   rollOutPods: true
+  # The API server on this single node sometimes stalls for several seconds
+  # (slow etcd). With the defaults (renew deadline 10s, lock request timeout 5s)
+  # one stalled lease renewal makes the operator exit with "Leader election
+  # lost" (90+ restarts). Only operator args change here; the agent is untouched.
+  extraArgs:
+    - --leader-election-lease-duration=60s
+    - --leader-election-renew-deadline=45s
+    - --leader-election-retry-period=5s
+    - --leader-election-resource-lock-timeout=20s
   prometheus:
     serviceMonitor:
       enabled: true
