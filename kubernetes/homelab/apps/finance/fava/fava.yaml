@@ -1,0 +1,247 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fava-data
+  namespace: finance
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: openebs-hostpath
+  resources:
+    requests:
+      storage: 2Gi
+---
+# git-daemon serves the ledger repo (RW) so the workstation and this pod can
+# push/pull to it. Not exposed via Service/Ingress: same-namespace access only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fava-git
+  namespace: finance
+spec:
+  clusterIP: None
+  selector:
+    app: fava-git
+  ports:
+    - name: git
+      port: 9418
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fava-git
+  namespace: finance
+  labels:
+    app: fava-git
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: fava-git
+  template:
+    metadata:
+      labels:
+        app: fava-git
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: git-daemon
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache git-daemon
+              printf '[safe]\n\tdirectory = *\n' > /etc/gitconfig
+              git daemon --base-path=/repo --export-all --reuseaddr --port=9418 --enable=receive-pack
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+      volumes:
+        - name: repo
+          persistentVolumeClaim:
+            claimName: fava-git-repo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fava-git-repo
+  namespace: finance
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: openebs-hostpath
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fava
+  namespace: finance
+  labels:
+    app: fava
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: fava
+  template:
+    metadata:
+      labels:
+        app: fava
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        # Create the bare repo served by fava-git; the workstation pushes the
+        # real ledger into it over port-forward, the sync sidecar pulls it.
+        - name: seed-git-repo
+          image: alpine/git:latest
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              if [ ! -f /repo/data.git/HEAD ]; then
+                git init --bare /repo/data.git
+                git -C /repo/data.git config core.sharedRepository group
+              fi
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+      containers:
+        - name: fava
+          image: harbor.lab.lan/library/fava:aacca1f
+          ports:
+            - name: http
+              containerPort: 5000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          env:
+            - name: FINTS_PIN_DEUTSCHE_BANK
+              valueFrom:
+                secretKeyRef:
+                  name: fava-fints
+                  key: FINTS_PIN_DEUTSCHE_BANK
+            - name: FINTS_PIN_ING
+              valueFrom:
+                secretKeyRef:
+                  name: fava-fints
+                  key: FINTS_PIN_ING
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+        # Sync loop: clone the ledger from the git-daemon repo (seeded by the
+        # workstation over port-forward), then commit cluster edits and push
+        # every 5 min. Runs as uid 1000 (matches fava container).
+        - name: git-sync
+          image: alpine/git:latest
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export HOME=/tmp
+              cd /data
+              git config --global --add safe.directory /data
+              if [ ! -d .git ]; then
+                git init -q -b master .
+              fi
+              git config user.name cluster
+              git config user.email cluster@fava
+              git remote add origin git://fava-git.finance.svc.cluster.local/data.git 2>/dev/null || true
+              until git fetch origin 2>/dev/null && git show-ref --verify --quiet refs/remotes/origin/master; do
+                echo "waiting for ledger push from workstation..."; sleep 30
+              done
+              git reset --hard origin/master
+              git branch --set-upstream-to=origin/master master 2>/dev/null || true
+              while true; do
+                sleep 300
+                git add -A
+                git commit -m "cluster" || true
+                git pull --rebase origin master || true
+                git push origin master || true
+              done
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: fava-data
+        - name: repo
+          persistentVolumeClaim:
+            claimName: fava-git-repo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fava
+  namespace: finance
+spec:
+  selector:
+    app: fava
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fava
+  namespace: finance
+  annotations:
+    cert-manager.io/cluster-issuer: ca-issuer
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "256"
+    k8s-gateway.dns/hostname: fava.lab.lan
+spec:
+  ingressClassName: cilium
+  tls:
+    - hosts:
+        - fava.lab.lan
+      secretName: fava-tls
+  rules:
+    - host: fava.lab.lan
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fava
+                port:
+                  number: 5000

@@ -1,0 +1,16 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: finance
+
+resources:
+  - namespace.yaml
+  - secret-hibiscus.sops.yaml
+  - secret-hibiscus-actual-config.sops.yaml
+  - secret-hibiscus-ntfy.sops.yaml
+  - configmap-ntfy-patch.yaml
+  - actual.yaml
+  - hibiscus.yaml
+  - hibiscus-actual.yaml
+  - ../fava
