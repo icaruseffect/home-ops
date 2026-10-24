@@ -154,9 +154,9 @@ spec:
               memory: 256Mi
             limits:
               memory: 1Gi
-        # Sync loop: clone the ledger from the git-daemon repo (seeded by the
-        # workstation over port-forward), then commit cluster edits and push
-        # every 5 min. Runs as uid 1000 (matches fava container).
+        # Sync: pull-only. The cluster never commits on its own; commits are
+        # made by the user in Fava's git UI (fava_git), and the repo's
+        # post-commit hook pushes them to the git-daemon immediately.
         - name: git-sync
           image: alpine/git:latest
           command:
@@ -170,20 +170,25 @@ spec:
               if [ ! -d .git ]; then
                 git init -q -b master .
               fi
-              git config user.name cluster
-              git config user.email cluster@fava
+              git config user.name "fava"
+              git config user.email "fava@fava.lab.lan"
               git remote add origin git://fava-git.finance.svc.cluster.local/data.git 2>/dev/null || true
               until git fetch origin 2>/dev/null && git show-ref --verify --quiet refs/remotes/origin/master; do
                 echo "waiting for ledger push from workstation..."; sleep 30
               done
-              git reset --hard origin/master
               git branch --set-upstream-to=origin/master master 2>/dev/null || true
+              git pull --rebase --autostash origin master || true
+              # Installed on the PVC; survives restarts. A commit from Fava's
+              # git UI triggers this push. Set once, idempotent.
+              mkdir -p .git/hooks
+              cat > .git/hooks/post-commit <<'HOOK'
+              #!/bin/sh
+              git push origin HEAD:master 2>&1 | tail -3
+              HOOK
+              chmod +x .git/hooks/post-commit
               while true; do
                 sleep 300
-                git add -A
-                git commit -m "cluster" || true
-                git pull --rebase origin master || true
-                git push origin master || true
+                git pull --rebase --autostash origin master || true
               done
           securityContext:
             runAsUser: 1000
