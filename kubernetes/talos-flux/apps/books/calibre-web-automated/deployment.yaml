@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: calibre-web-automated
-          image: crocodilestick/calibre-web-automated:v4.0.8
+          image: crocodilestick/calibre-web-automated:v4.0.8 # {"$imagepolicy": "flux-system:calibre-web-automated"}
           imagePullPolicy: IfNotPresent
           env:
             - name: PUID

@@ -10,4 +10,5 @@ resources:
   - helm-release.yaml
   - secret-miniflux.sops.yaml
   - httproute.yaml
+  - image-automation.yaml
 

@@ -1,0 +1,23 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/image.toolkit.fluxcd.io/imagerepository_v1.json
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: miniflux
+  namespace: flux-system
+spec:
+  image: ghcr.io/miniflux/miniflux
+  interval: 1h
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/image.toolkit.fluxcd.io/imagepolicy_v1.json
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: miniflux
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: miniflux
+  policy:
+    semver:
+      range: '>=2.3.0 <3.0.0'

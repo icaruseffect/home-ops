@@ -16,7 +16,7 @@ spec:
         namespace: flux-system
   values:
     image:
-      tag: 2.3.4
+      tag: 2.3.4 # {"$imagepolicy": "flux-system:miniflux"}
     envFrom:
       - secretRef:
           name: miniflux
