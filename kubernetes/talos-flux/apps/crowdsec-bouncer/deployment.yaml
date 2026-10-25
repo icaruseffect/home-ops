@@ -1,0 +1,77 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowdsec-cilium-bouncer
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec-cilium-bouncer
+spec:
+  # DISABLED: re-arming this bouncer reproduced the cilium 1.20.2 statedb
+  # policy-computation wedge twice (2026-09-20: sync of ~23k CIDRs into the
+  # CCNP froze the policy engine at rev 11, all endpoints stuck
+  # waiting-to-regenerate, new pods unschedulable; recovered only by node
+  # reboot). Keep replicas 0 until cilium ships the statedb fix (1.20.3+ or
+  # newer), or consider splitting decisions into ~1k-CIDR CCNP chunks first.
+  # To re-arm: set replicas to 1 and `kubectl apply -f deployment.yaml`.
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crowdsec-cilium-bouncer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crowdsec-cilium-bouncer
+    spec:
+      serviceAccountName: crowdsec-cilium-bouncer
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: crowdsec-cilium-bouncer
+          # ghcr.io/hydazz/crowdsec-cilium-bouncer — 0.0.3 is the newest tag
+          # with a pushed multi-arch image (0.0.4 release exists on GitHub but
+          # its image was never published to ghcr; verified 2026-09-20).
+          image: ghcr.io/hydazz/crowdsec-cilium-bouncer:0.0.3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CROWDSEC_URL
+              # LAPI service deployed by the crowdsec HelmRelease (same ns).
+              value: http://crowdsec-service.crowdsec.svc.cluster.local:8080
+            - name: CROWDSEC_BOUNCER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  # Same key the LAPI registers as BOUNCER_KEY_cilium_bouncer;
+                  # provisioned by secret-crowdsec-bouncer.sops.yaml (ns crowdsec).
+                  name: crowdsec-bouncer-api
+                  key: api-key
+            - name: CROWDSEC_FILTER_TYPES
+              value: ban
+            - name: CROWDSEC_FILTER_SCOPES
+              value: Ip,Range
+            - name: SYNC_INTERVAL
+              # 60s halves CCNP policy-write churn vs the 30s default; the
+              # cilium 1.20.2 statedb wedge (incident 2026-09-20) makes lower
+              # policy-update frequency prudent.
+              value: 60s
+            - name: ALLOW_LOCAL_CIDRS
+              # Cluster pod/service CIDRs (10.0.0.0/8) must never be blocked.
+              value: "true"
+            - name: LOG_LEVEL
+              value: info
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          # NOTE: the bouncer binary runs only a decision-sync loop — it does
+          # not serve any HTTP endpoint (no /metrics; verified in source), so
+          # no readiness/liveness probe is possible. Health = pod Running +
+          # sync logs + generated CiliumClusterwideNetworkPolicy.

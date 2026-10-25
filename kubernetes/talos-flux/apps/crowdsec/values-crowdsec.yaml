@@ -46,10 +46,10 @@ config:
     name: ip_remediation_high_severity
     # CrowdSec alerts carry no severity field, so "high severity" is decided by
     # scenario: credential brute force, exploit/CVE/RCE attempts, backdoors,
-    # SQLi/XSS/path traversal, open-proxy abuse, k8s-audit and Stalwart auth scenarios.
+    # SQLi/XSS/path traversal, open-proxy abuse, k8s-audit and Stalwart auth/abuse bans.
     # Only these notify; the ban is the same as for every other IP alert.
     filters:
-      - 'Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() matches "(?i)(-bf|bruteforce|cve|vmsa|_rce|log4j|spring4shell|backdoors|sqli|xss|path-traversal|open-proxy|k8s-audit|stalwart|ha-login)"'
+      - 'Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() matches "(?i)(-bf|bruteforce|cve|vmsa|_rce|log4j|spring4shell|backdoors|sqli|xss|path-traversal|open-proxy|k8s-audit|stalwart-ban-(authentication|abuse)|ha-login)"'
     decisions:
       - type: ban
         duration: 4h
@@ -156,6 +156,73 @@ config:
         spoofable: 0
         behavior: "stalwart:bruteforce"
         label: "Stalwart Bruteforce"
+    # Stalwart's own bans (Security settings: port scanning, loitering, abuse
+    # attempt, authentication failure). Stalwart keeps its ban list internally,
+    # so each ban event becomes an immediate CrowdSec decision here; the IP is
+    # then also blocked on every route behind the bouncer and shows up in the
+    # dashboard/ntfy. security.ip-blocked (repeat connections from an already
+    # banned IP) is deliberately not used. Authentication and abuse bans count
+    # as high severity for ntfy, scan and loiter bans do not.
+    stalwart-ban-authentication.yaml: |
+      type: trigger
+      name: custom/stalwart-ban-authentication
+      description: "Stalwart authentication failure ban (mirrored from Stalwart)"
+      filter: "evt.Meta.log_type == 'stalwart_security' && evt.Meta.stalwart_event == 'security.authentication-ban'"
+      groupby: evt.Meta.source_ip
+      blackhole: 1m
+      labels:
+        service: stalwart
+        type: bruteforce
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "stalwart:authentication"
+        label: "Stalwart Stalwart authentication failure ban"
+    stalwart-ban-abuse.yaml: |
+      type: trigger
+      name: custom/stalwart-ban-abuse
+      description: "Stalwart abuse attempt ban (mirrored from Stalwart)"
+      filter: "evt.Meta.log_type == 'stalwart_security' && evt.Meta.stalwart_event == 'security.abuse-ban'"
+      groupby: evt.Meta.source_ip
+      blackhole: 1m
+      labels:
+        service: stalwart
+        type: bruteforce
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "stalwart:abuse"
+        label: "Stalwart Stalwart abuse attempt ban"
+    stalwart-ban-scan.yaml: |
+      type: trigger
+      name: custom/stalwart-ban-scan
+      description: "Stalwart port scanning ban (mirrored from Stalwart)"
+      filter: "evt.Meta.log_type == 'stalwart_security' && evt.Meta.stalwart_event == 'security.scan-ban'"
+      groupby: evt.Meta.source_ip
+      blackhole: 1m
+      labels:
+        service: stalwart
+        type: scan
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "stalwart:scan"
+        label: "Stalwart Stalwart port scanning ban"
+    stalwart-ban-loiter.yaml: |
+      type: trigger
+      name: custom/stalwart-ban-loiter
+      description: "Stalwart loitering ban (mirrored from Stalwart)"
+      filter: "evt.Meta.log_type == 'stalwart_security' && evt.Meta.stalwart_event == 'security.loiter-ban'"
+      groupby: evt.Meta.source_ip
+      blackhole: 1m
+      labels:
+        service: stalwart
+        type: scan
+        remediation: true
+        confidence: 3
+        spoofable: 0
+        behavior: "stalwart:loiter"
+        label: "Stalwart Stalwart loitering ban"
 
   parsers:
     s01-parse:

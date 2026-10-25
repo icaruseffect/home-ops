@@ -9,7 +9,7 @@ spec:
   chart:
     spec:
       chart: reflector
-      version: "9.0.322"
+      version: "9.x.x"
       sourceRef:
         kind: HelmRepository
         name: emberstack-charts
@@ -23,3 +23,14 @@ spec:
     crds: CreateReplace
     remediation:
       retries: 5
+  # was unbounded (BestEffort-adjacent) - same class of fix as cilium
+  # (see values.yaml there): give it real headroom over its observed steady
+  # state (~150Mi RSS via metrics-server) rather than leave it uncapped.
+  values:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 160Mi
+      limits:
+        cpu: 250m
+        memory: 320Mi

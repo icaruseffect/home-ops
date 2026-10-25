@@ -1,7 +1,11 @@
 ---
-# Keeps the CrowdSec allowlist `dyn-home` in sync with the current IPv6 address
-# of dyn.${SECRET_DOMAIN} (home connection, dynamic DNS). Allowlisted IPs never
-# get a decision and are filtered out of the bouncer stream. The job resolves
+# Keeps the CrowdSec allowlist `dyn-home` in sync with the /64 network of the
+# current IPv6 address of dyn.${SECRET_DOMAIN} (home connection, dynamic DNS).
+# The whole /64 is allowlisted, not just the one address: clients on a home
+# network use several and rotating (privacy) addresses, so a single /128 left
+# most devices unprotected and they got banned by the 401/403 brute-force
+# scenarios. Allowlisted IPs never get a decision and are filtered out of the
+# bouncer stream. The job resolves
 # the AAAA record inside the LAPI pod and edits the allowlist with cscli there
 # (kubectl exec), so no CrowdSec credentials are needed in this pod. IPv6 only:
 # dyn.${SECRET_DOMAIN} has no A record.
@@ -81,16 +85,22 @@ spec:
                   case "$IP" in
                     ""|*[!0-9a-f:]*) echo "no usable AAAA record for $DYN_HOST (got '$IP'); allowlist left unchanged"; exit 1 ;;
                   esac
-                  lapi cscli allowlists create dyn-home -d "$DYN_HOST AAAA (managed by CronJob dyn-allowlist)" >/dev/null 2>&1 || true
+                  # network of the resolved address, computed before the allowlist is touched
+                  NET=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1] + "/64", strict=False))' "$IP")
+                  case "$NET" in
+                    *:*/64) ;;
+                    *) echo "could not compute the /64 of '$IP' (got '$NET'); allowlist left unchanged"; exit 1 ;;
+                  esac
+                  lapi cscli allowlists create dyn-home -d "$DYN_HOST AAAA /64 (managed by CronJob dyn-allowlist)" >/dev/null 2>&1 || true
                   CUR=$(lapi cscli allowlists inspect dyn-home -o raw | awk -F, 'NR>1 {print $3}')
                   for v in $CUR; do
-                    [ "$v" = "$IP/128" ] || { echo "removing stale $v"; lapi cscli allowlists remove dyn-home "$v"; }
+                    [ "$v" = "$NET" ] || { echo "removing stale $v"; lapi cscli allowlists remove dyn-home "$v"; }
                   done
-                  if echo "$CUR" | grep -qx "$IP/128"; then
-                    echo "$DYN_HOST -> $IP already allowlisted"
+                  if echo "$CUR" | grep -qx "$NET"; then
+                    echo "$DYN_HOST -> $IP ($NET) already allowlisted"
                   else
-                    echo "allowlisting $DYN_HOST -> $IP"
-                    lapi cscli allowlists add dyn-home "$IP/128" -d "$DYN_HOST"
+                    echo "allowlisting $DYN_HOST -> $IP as $NET"
+                    lapi cscli allowlists add dyn-home "$NET" -d "$DYN_HOST /64"
                   fi
               securityContext:
                 allowPrivilegeEscalation: false
