@@ -1,0 +1,133 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: stacks
+  namespace: books
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: app-template
+      reconcileStrategy: ChartVersion
+      version: ">=4.0.0 <5.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s-charts
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    controllers:
+      stacks:
+        type: deployment
+        strategy: Recreate # writes local state (queue/config) to its PVCs; unsafe to run two pods against them
+        annotations:
+          reloader.stakater.com/auto: "true"
+        containers:
+          main:
+            image:
+              repository: zelest/stacks
+              tag: "v1.3.0"
+            env:
+              STACKS_PROJECT_ROOT: /opt/stacks
+              PEX_ROOT: /tmp/pex
+              SOLVERR_URL: "stacks-flaresolverr:8191"
+              TZ: Europe/Berlin
+              USERNAME:
+                valueFrom:
+                  secretKeyRef:
+                    name: stacks-credentials
+                    key: USERNAME
+              PASSWORD:
+                valueFrom:
+                  secretKeyRef:
+                    name: stacks-credentials
+                    key: PASSWORD
+            ports:
+              - name: http
+                containerPort: 7788
+                protocol: TCP
+            probes:
+              liveness:
+                enabled: true
+                spec:
+                  httpGet:
+                    path: /api/health
+                    port: 7788
+                  initialDelaySeconds: 10
+                  periodSeconds: 30
+                  timeoutSeconds: 3
+                  failureThreshold: 3
+              readiness:
+                enabled: true
+                spec:
+                  httpGet:
+                    path: /api/health
+                    port: 7788
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                  timeoutSeconds: 3
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                memory: 512Mi
+
+      flaresolverr:
+        type: deployment
+        containers:
+          main:
+            image:
+              repository: ghcr.io/flaresolverr/flaresolverr
+              tag: latest
+            env:
+              LOG_LEVEL: info
+              TZ: Europe/Berlin
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 1Gi
+
+    # No ingress block: Stacks is reached only through the authentik outpost's reverse proxy
+    # (Proxy Provider, internal host http://stacks.books.svc.cluster.local:7788), not a
+    # Kubernetes Ingress. Configure the Provider/Application/Outpost in the authentik UI.
+    service:
+      stacks:
+        controller: stacks
+        ports:
+          http:
+            port: 7788
+      flaresolverr:
+        controller: flaresolverr
+        ports:
+          http:
+            port: 8191
+
+    persistence:
+      config:
+        existingClaim: stacks-config
+        advancedMounts:
+          stacks:
+            main:
+              - path: /opt/stacks/config
+      download:
+        existingClaim: stacks-download
+        advancedMounts:
+          stacks:
+            main:
+              - path: /opt/stacks/download
+      logs:
+        existingClaim: stacks-logs
+        advancedMounts:
+          stacks:
+            main:
+              - path: /opt/stacks/logs

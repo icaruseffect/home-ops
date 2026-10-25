@@ -1,0 +1,164 @@
+---
+replicaCount: 1
+
+deployment:
+  image:
+    repository: quay.io/go-skynet/local-ai
+    # Deliberately NOT an "-aio-*" tag. The AIO image's startup routine scans
+    # its whole baked-in /aio/<profile>/*.yaml directory (embeddings, rerank,
+    # text-to-text, text-to-speech, image-gen, speech-to-text, vad, vision)
+    # and ensures/downloads every one of those categories unconditionally -
+    # confirmed by testing: even with MODELS restricted to 4 files and
+    # LOCALAI_AUTOLOAD_GALLERIES=false, and even after deleting every on-disk
+    # config that referenced them, it still re-downloaded stable-diffusion
+    # (image-gen) and MiniCPM-V (vision) every restart, on both v3.8.0 and
+    # v3.12.x - so MODELS/AUTOLOAD_GALLERIES never controlled it and the
+    # "AgentJobService" (v3.9.0+) theory tested previously was wrong. The
+    # plain (non-aio) image ships no /aio directory at all, so that scan
+    # can't run - it just serves whatever configs are already in /models.
+    tag: v3.8.0
+  env:
+    # Node (contabo-de-1) has only 6 physical CPU cores, shared with other
+    # workloads - 12 threads oversubscribed the CPU and hurt llama.cpp latency.
+    threads: 4
+    context_size: 512
+    # see the documentation at: https://localai.io/basics/build/index.html                                                                           │
+    CMAKE_ARGS: "-DGGML_AVX512=OFF"
+    # Explicit configs already present in /models (weights included) for the
+    # 4 categories actually used: embeddings, rerank, chat, tts.
+    MODELS: "/models/text-embedding-ada-002.yaml,/models/jina-reranker-v1-base-en.yaml,/models/gpt-4.yaml,/models/tts-1.yaml"
+    LOCALAI_AUTOLOAD_GALLERIES: "false"
+
+  # # Inject Secrets into Environment:
+  secretEnv:
+    - name: HUGGINGFACEHUB_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: localai
+          key: HUGGINGFACEHUB_API_TOKEN
+
+  modelsPath: "/models"
+  prompt_templates:
+    # To use cloud provided (eg AWS) image, provide it like: 1234356789.dkr.ecr.us-REGION-X.amazonaws.com/busybox
+    image: busybox
+  pullPolicy: IfNotPresent
+  imagePullSecrets: []
+    # - name: secret-names
+
+  ## Needed for GPU Nodes
+  #runtimeClassName: gpu
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+# Model config to include
+modelsConfigs: {}
+  # phi-2: |
+  #   name: phi-2
+  #   context_size: 2048
+  #   f16: true
+  #   mmap: true
+  #   trimsuffix:
+  #   - "\n"
+  #   parameters:
+  #     model: phi-2.Q8_0.gguf
+  #     temperature: 0.2
+  #     top_k: 40
+  #     top_p: 0.95
+  #     seed: -1
+  #   template:
+  #     chat: &template |-
+  #       Instruct: {{.Input}}
+  #       Output:
+  #     completion: *template
+
+# Prompt templates to include
+# Note: the keys of this map will be the names of the prompt template files
+promptTemplates: {}
+  # ggml-gpt4all-j.tmpl: |
+  #   The prompt below is a question to answer, a task to complete, or a conversation to respond to; decide which and write an appropriate response.
+  #   ### Prompt:
+  #   {{.Input}}
+  #   ### Response:
+
+initContainers: []
+# Example:
+# - name: my-init-container
+#   image: my-init-image
+#   imagePullPolicy: IfNotPresent
+#   command: ["/bin/sh", "-c", "echo init"]
+#   volumeMounts:
+#     - name: my-volume
+#       mountPath: /path/to/mount
+
+sidecarContainers: []
+# Example:
+# - name: my-sidecar-container
+#   image: my-sidecar-image
+#   imagePullPolicy: IfNotPresent
+#   ports:
+#     - containerPort: 1234
+
+# Persistent storage for models and prompt templates.
+# PVC and HostPath are mutually exclusive. If both are enabled,
+# PVC configuration takes precedence. If neither are enabled, ephemeral
+# storage is used.
+persistence:
+  models:
+    enabled: true
+    annotations: {}
+    storageClass: "openebs-hostpath" # Use default storage class
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    globalMount: /models
+  output:
+    enabled: true
+    annotations: {}
+    storageClass: "openebs-hostpath" # Use default storage class
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    globalMount: /tmp/generated
+
+service:
+  type: ClusterIP
+  # If deferring to an internal only load balancer
+  # externalTrafficPolicy: Local
+  port: 8080
+  nodePort:
+  annotations: {}
+  # If using an AWS load balancer, you'll need to override the default 60s load balancer idle timeout
+  # service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "1200"
+
+ingress:
+  enabled: false
+  className: "cilium"
+  annotations: {}
+    # nginx.ingress.kubernetes.io/proxy-body-size: "25m" # This value determines the maxmimum uploadable file size
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: localai.${SECRET_DOMAIN}
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls:
+    - secretName: localai.${SECRET_DOMAIN}-tls
+      hosts:
+        - localai.${SECRET_DOMAIN}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

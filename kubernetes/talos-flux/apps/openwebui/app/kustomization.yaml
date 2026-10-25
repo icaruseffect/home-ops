@@ -1,0 +1,14 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: open-webui
+resources:
+  - helm-release.yaml
+  - secret-open-webui-oidc.yaml
+  - httproute.yaml
+configMapGenerator:
+  - name: open-webui-values
+    files:
+      - values-open-webui.yaml
+    options:
+      disableNameSuffixHash: true

@@ -1,0 +1,12 @@
+---
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+namespace: mcp
+configMapGenerator:
+  - name: mcpo-conf
+    files:
+      - config.json
+    options:
+      disableNameSuffixHash: true
