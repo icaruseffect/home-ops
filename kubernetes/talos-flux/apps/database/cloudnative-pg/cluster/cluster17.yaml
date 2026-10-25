@@ -46,3 +46,8 @@ spec:
         login: true
         passwordSecret:
           name: psql-miniflux
+      - name: authelia
+        ensure: present
+        login: true
+        passwordSecret:
+          name: authelia-db-app

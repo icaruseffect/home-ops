@@ -49,7 +49,6 @@ metadata:
 spec:
   dependsOn:
     - name: apps-cloudnative-pg
-    - name: apps-kube-prometheus-stack
   path: ./kubernetes/talos-flux/apps/database/cloudnative-pg/observability
   prune: true
   sourceRef:
