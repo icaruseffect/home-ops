@@ -2,34 +2,29 @@
 # yaml-language-server: $schema=https://json.schemastore.org/kustomization
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Explicit child list so the apps-sync build does not recurse into
-# uncommitted/WIP directories (langfuse, workflow, calendarsync, site,
-# bootstrap, terminagent, velociraptor, mcp).
+# Aggregates ONLY the per-app Kustomization definitions (flux-sync.yaml
+# files) that exist live, so apps-sync's build inventory matches the
+# current cluster and prune cannot delete anything else. Apps applied by
+# the (suspended) legacy flux-system Kustomization or manually (ntfy,
+# hoarder, openwebui, localai, site, mcp, terminagent, langfuse, ...)
+# are deliberately not adopted here.
 resources:
-  - ./auth/authentik
-  - ./auth/authelia
-  - ./books/stacks
-  - ./cert-manager
-  - ./cloud
-  - ./crowdsec
-  - ./crowdsec-bouncer
-  - ./database
-  - ./envoy-crowdsec-bouncer
-  - ./flux-system
-  - ./github
-  - ./hoarder
-  - ./homeassistant
-  - ./kube-system
-  - ./kube-tools
-  - ./localai
-  - ./mail
-  - ./mollysocket
-  - ./ntfy
-  - ./observability
-  - ./openebs-system
-  - ./openwebui
-  - ./photos
-  - ./reader
-  - ./s3proxy
-  - ./velero
-  - ./volsync
+  - ./cert-manager/cert-manager/flux-sync.yaml
+  - ./cert-manager/cert-manager-webhook-inwx/flux-sync.yaml
+  - ./cert-manager/reflector/flux-sync.yaml
+  - ./cloud/nextcloud/flux-sync.yaml
+  - ./database/cloudnative-pg/flux-sync.yaml
+  - ./database/dragonfly/flux-sync.yaml
+  - ./flux-system/gotk/flux-sync.yaml
+  - ./kube-system/cilium/flux-sync.yaml
+  - ./kube-system/cilium/gateway/flux-sync.yaml
+  - ./kube-system/kubelet-csr-approver/flux-sync.yaml
+  - ./kube-system/metrics-server/flux-sync.yaml
+  - ./kube-system/snapshot-controller/flux-sync.yaml
+  - ./kube-tools/reloader/flux-sync.yaml
+  - ./mail/flux-sync.yaml
+  - ./mollysocket/flux-sync.yaml
+  - ./observability/grafana/flux-sync.yaml
+  - ./observability/uptime-kuma/flux-sync.yaml
+  - ./openebs-system/openebs/flux-sync.yaml
+  - ./volsync/volsync/flux-sync.yaml
