@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: calibre-web-automated
+spec:
+  selector:
+    app: calibre-web-automated
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8083
+      targetPort: http
