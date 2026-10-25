@@ -1,6 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
+  namespace: books
   name: calibre-web-automated
 spec:
   selector:
