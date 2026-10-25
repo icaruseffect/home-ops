@@ -20,4 +20,4 @@ spec:
     name: calibre-web-automated
   policy:
     semver:
-      range: '>=4.0.6 <5.0.0'
+      range: ">=4.0.6 <5.0.0"

@@ -20,4 +20,4 @@ spec:
     name: miniflux
   policy:
     semver:
-      range: '>=2.3.0 <3.0.0'
+      range: ">=2.3.0 <3.0.0"
