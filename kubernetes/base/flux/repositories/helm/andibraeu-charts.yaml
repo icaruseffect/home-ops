@@ -3,10 +3,9 @@
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: dbman-charts
+  name: andibraeu
   namespace: flux-system
 spec:
-  type: oci
   interval: 1h
   timeout: 3m
-  url: oci://ghcr.io/hef/charts
+  url: https://andibraeu.github.io/helmcharts/

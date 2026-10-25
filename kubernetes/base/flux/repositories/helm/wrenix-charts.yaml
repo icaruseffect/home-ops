@@ -1,11 +1,11 @@
 ---
-# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/source.toolkit.fluxcd.io/helmrepository_v1beta2.json
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: stalwart-mail-charts
+  name: wrenix-charts
   namespace: flux-system
 spec:
-  interval: 1h
-  url: oci://codeberg.org/wrenix/helm-charts
   type: oci
+  interval: 1h
+  timeout: 3m
+  url: oci://codeberg.org/wrenix/helm-charts
