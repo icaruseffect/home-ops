@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: psql-miniflux
+  namespace: reader
+  annotations:
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: database
+type: kubernetes.io/basic-auth
+stringData:
+  password: ENC[AES256_GCM,data:f3H/icCnNzqhJSmbrK9d6fntdTivKDn7rjpenQ1zgJ0j+Iw=,iv:HZ/B6ER3QC6YZIzhG+szASWfIie7SSFOdKQ2LOvKBrA=,tag:cj9DbNUk41tOO3hzSsRo9A==,type:str]
+  username: ENC[AES256_GCM,data:A7p6FMbrbLI=,iv:cLGr0GGHLeqQTxq2JUKsOHXSbQP01dEzSNeKY9k+U/M=,tag:18IJtZjTe/jJCNeX08hXwQ==,type:str]
+  dbConnectionString: ENC[AES256_GCM,data:dVhI3ZeemoJ4O8WTWvZpWO12SZpq/MPxMoTEml+FzrpfkfySqxmrKCWECuomSW3TEqaOrx9QLqEItyCFTXx74rZDELP0v8sQIjlct1BzyqjFO/Dhb8XiQHFiHOkiuDADCxUok6CzubSQf/dB4jE=,iv:3ore3fKuYCFlZ6FdKIOWUdmbA8uABndzDR+lvX4VFcU=,tag:Yug8lc3nPn7AQuhhoOhpNA==,type:str]
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxRE5ZVmtLTnlBVzVGVFRm
+        NG40Z0V5cm9XczZVWEFwWDlRV1dZSmJabjAwCnFCM2drT0pmaEVqOWJnNXY2RGVv
+        UWZWaGs0Q0FnS2hOMVRKTk00dGhXTGsKLS0tIHExUnRTbjlheVRDdDdOSWtEeC8y
+        N1lsZ2lyQzVELzRsZUdJSHJxMEpOazgKqPATAoDW9gbd/bBAMYdykAeOvQkTGLGY
+        zIF+O26io05yKZTVdoDzyA56GVWf493oEMu9ZI8UqjKFI5tHPnwp7A==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-08-16T21:24:34Z"
+  mac: ENC[AES256_GCM,data:1eOCME4O59e+/zjwq55f8QQlXfpNMcsDDS9esTEO7cx/i+1YqQFgGH5zdxQ8+12jTW7v+8lviqXK4PehIseWVWpOzPFKK6R4ZVSdlOwy8Z1+xdcm+DKvfuiGeV5tpG3fn/UuXfoLCRhqs5A0s0mEWqfW5puBBehOVfgXmGewzM0=,iv:1h0PtE1yh1VBtyLPOz1NPHq9VbnYIU5I3m2VUtFiO5w=,tag:/IUz7q2LpR92cFZDs4Pfng==,type:str]
+  version: 3.13.3
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: psql-miniflux
+  namespace: database
+  annotations:
+    reflector.v1.k8s.emberstack.com/reflects: reader/psql-miniflux
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxRE5ZVmtLTnlBVzVGVFRm
+        NG40Z0V5cm9XczZVWEFwWDlRV1dZSmJabjAwCnFCM2drT0pmaEVqOWJnNXY2RGVv
+        UWZWaGs0Q0FnS2hOMVRKTk00dGhXTGsKLS0tIHExUnRTbjlheVRDdDdOSWtEeC8y
+        N1lsZ2lyQzVELzRsZUdJSHJxMEpOazgKqPATAoDW9gbd/bBAMYdykAeOvQkTGLGY
+        zIF+O26io05yKZTVdoDzyA56GVWf493oEMu9ZI8UqjKFI5tHPnwp7A==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-08-16T21:24:34Z"
+  mac: ENC[AES256_GCM,data:1eOCME4O59e+/zjwq55f8QQlXfpNMcsDDS9esTEO7cx/i+1YqQFgGH5zdxQ8+12jTW7v+8lviqXK4PehIseWVWpOzPFKK6R4ZVSdlOwy8Z1+xdcm+DKvfuiGeV5tpG3fn/UuXfoLCRhqs5A0s0mEWqfW5puBBehOVfgXmGewzM0=,iv:1h0PtE1yh1VBtyLPOz1NPHq9VbnYIU5I3m2VUtFiO5w=,tag:/IUz7q2LpR92cFZDs4Pfng==,type:str]
+  version: 3.13.3
