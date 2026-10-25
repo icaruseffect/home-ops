@@ -1,0 +1,33 @@
+# ---
+# apiVersion: "acid.zalan.do/v1"
+# kind: postgresql
+# metadata:
+#   name: authentik-postgres-cluster
+#   annotations:
+#     k8up.io/backup: "false"
+# spec:
+#   teamId: "authentik"
+#   volume:
+#     size: 10Gi
+#   numberOfInstances: 3
+#   users:
+#     # database owner
+#     authentik:
+#     - superuser
+#     - createdb
+#   databases:
+#     authentik: authentik
+#   postgresql:
+#     version: "16"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: authentik-database
+  namespace: database
+spec:
+  cluster:
+    name: postgres17
+  name: authentik
+  owner: authentik
+  ensure: present

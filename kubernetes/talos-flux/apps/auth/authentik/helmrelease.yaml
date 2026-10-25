@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       chart: authentik
-      version: ">=2024.10.0 <2026.0.0"
+      version: "*"
       sourceRef:
         kind: HelmRepository
         name: authentik-charts
@@ -94,8 +94,8 @@ spec:
         timeoutSeconds: 10
       startupProbe:
         timeoutSeconds: 10
-        initialDelaySeconds: 60
-        failureThreshold: 15
+        initialDelaySeconds: 120
+        failureThreshold: 30
       resources:
         limits:
           memory: 2Gi
