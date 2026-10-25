@@ -17,7 +17,7 @@ mollysocket:
   allowedUUIDs: # TODO restrict UUIDs
     - "*"
   allowedEnpoints: # TODO restrict ENDPOITNS
-    - "*"
+    - "https://ntfy.${SECRET_DOMAIN}/"
 
 ## Enable persistence using Persistent Volume Claims
 ## ref: http://kubernetes.io/docs/user-guide/persistent-volumes/
@@ -74,12 +74,10 @@ serviceAccount:
 
 podAnnotations: {}
 
-podSecurityContext:
-  {}
+podSecurityContext: {}
   # fsGroup: 2000
 
-securityContext:
-  {}
+securityContext: {}
   # capabilities:
   #   drop:
   #   - ALL
@@ -94,8 +92,7 @@ service:
 ingress:
   enabled: false
 
-resources:
-  {}
+resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
   # resources, such as Minikube. If you do want to specify resources, uncomment the following
@@ -119,3 +116,10 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+env:
+  - name: MOLLY_VAPID_PRIVKEY
+    valueFrom:
+      secretKeyRef:
+        name: mollysocket
+        key: ms_vapid_key
