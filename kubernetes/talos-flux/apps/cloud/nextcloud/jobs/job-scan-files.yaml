@@ -1,0 +1,143 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nextcloud-scan-files
+  namespace: cloud
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 33
+      serviceAccountName: nextcloud-serviceaccount
+      containers:
+        - name: post-upgrade
+          image: nextcloud:35.0.2-apache
+          securityContext:
+            runAsUser: 33
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+            - -c
+            - |
+              # Wait for Nextcloud to be fully ready
+              echo "[INFO] Waiting for Nextcloud to be ready..."
+              attempt=0
+              max_attempts=30
+              while [ $attempt -lt $max_attempts ]; do
+                if curl -s -k -o /dev/null http://nextcloud.cloud.svc.cluster.local:8080/status.php; then
+                  echo "[INFO] Nextcloud is ready. Proceeding with post-upgrade steps."
+                  break
+                fi
+                attempt=$((attempt+1))
+                echo "[WARN] Attempt $attempt/$max_attempts: Nextcloud not ready yet, waiting..."
+                sleep 10
+              done
+
+              if [ $attempt -eq $max_attempts ]; then
+                echo "[ERROR] Nextcloud did not become ready in time. Proceeding with post-upgrade steps anyway."
+              fi
+
+              # Run post-upgrade file scan
+              echo "[INFO] Running Memories Places setup..."
+
+              # Use the correct path directly based on the deployment configuration
+              cd /var/www/html
+
+              # List directory to verify content
+              echo "[INFO] Content of /var/www/html:"
+              ls -la
+
+              # Print current data directory setting
+              echo "[INFO] Current data directory setting:"
+              php -r 'include "/var/www/html/config/config.php"; echo "Data directory: " . $CONFIG["datadirectory"] . "\n";' || echo "Could not read config.php"
+
+              # Make sure the environment variables match your main Nextcloud deployment
+              export NEXTCLOUD_DATA_DIR="/var/www/html/data"
+
+              # Execute the command
+              echo "[INFO] Executing files:scan command..."
+              php occ files:scan --all --no-interaction
+
+              if [ $? -ne 0 ]; then
+                echo "[WARN] File scan completed with issues. Check logs for details."
+                exit 1
+              else
+                echo "[INFO] File scan completed successfully."
+              fi
+          env:
+            - name: POSTGRES_HOST
+              value: postgres17-rw.database.svc.cluster.local:5432
+            - name: POSTGRES_DB
+              value: nextcloud
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  key: db-username
+                  name: psql-nextcloud
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: db-password
+                  name: psql-nextcloud
+            - name: NEXTCLOUD_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  key: nextcloud-username
+                  name: nextcloud
+            - name: NEXTCLOUD_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: nextcloud-password
+                  name: nextcloud
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              value: cloud.klingel.cloud klingel.cloud
+            - name: NEXTCLOUD_UPDATE
+              value: "1"
+            - name: NEXTCLOUD_DATA_DIR
+              value: /var/www/html/data
+            # was nextcloud-redis-master (a bitnami-redis subchart service that
+            # doesn't exist - redis.enabled: false in app/values.yaml) with a
+            # stale password ref; the live Deployment uses dragonfly.database
+            # with no auth (Dragonfly has no requirepass configured)
+            - name: REDIS_HOST
+              value: dragonfly.database
+            - name: REDIS_HOST_PORT
+              value: "6379"
+          volumeMounts:
+            - mountPath: /var/www/
+              name: nextcloud-main
+              subPath: root
+            - mountPath: /var/www/html
+              name: nextcloud-main
+              subPath: html
+            - mountPath: /var/www/html/data
+              name: nextcloud-data
+              subPath: data
+            - mountPath: /var/www/html/config
+              name: nextcloud-main
+              subPath: config
+            - mountPath: /var/www/html/custom_apps
+              name: nextcloud-main
+              subPath: custom_apps
+            - mountPath: /var/www/tmp
+              name: nextcloud-main
+              subPath: tmp
+            - mountPath: /var/www/html/themes
+              name: nextcloud-main
+              subPath: themes
+      volumes:
+        - name: nextcloud-main
+          persistentVolumeClaim:
+            claimName: nextcloud-nextcloud
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-nextcloud-data

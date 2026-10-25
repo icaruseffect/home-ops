@@ -1,0 +1,20 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cnpg-database-creator-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cnpg-database-creator
+subjects:
+  - kind: ServiceAccount
+    name: database-creator
+    namespace: cloud
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database-creator
+  namespace: cloud
