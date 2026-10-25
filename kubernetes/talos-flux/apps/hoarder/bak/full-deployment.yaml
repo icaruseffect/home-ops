@@ -1,0 +1,151 @@
+---
+# Namespace for all Hoarder resources
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hoarder
+---
+# PersistentVolumeClaim for web service data storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hoarder-data-pvc
+  namespace: hoarder
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi # Adjust size as needed
+---
+# PersistentVolumeClaim for meilisearch data storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: meilisearch-data-pvc
+  namespace: hoarder
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi # Adjust size as needed
+---
+# Service for web
+apiVersion: v1
+kind: Service
+metadata:
+  name: hoarder-web
+spec:
+  selector:
+    app: hoarder-web
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+# Deployment for Chrome
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hoarder-chrome
+  namespace: hoarder
+  labels:
+    app: hoarder-chrome
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hoarder-chrome
+  template:
+    metadata:
+      labels:
+        app: hoarder-chrome
+    spec:
+      containers:
+        - name: chrome
+          image: gcr.io/zenika-hub/alpine-chrome:lastest
+          ports:
+            - containerPort: 9222
+          args:
+            - "--no-sandbox"
+            - "--disable-gpu"
+            - "--disable-dev-shm-usage"
+            - "--remote-debugging-address=0.0.0.0"
+            - "--remote-debugging-port=9222"
+            - "--hide-scrollbars"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+---
+# Service for Chrome
+apiVersion: v1
+kind: Service
+metadata:
+  name: hoarder-chrome
+spec:
+  selector:
+    app: hoarder-chrome
+  ports:
+    - port: 9222
+      targetPort: 9222
+---
+# Deployment for Meilisearch
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hoarder-meilisearch
+  namespace: hoarder
+  labels:
+    app: hoarder-meilisearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hoarder-meilisearch
+  template:
+    metadata:
+      labels:
+        app: hoarder-meilisearch
+    spec:
+      containers:
+        - name: meilisearch
+          image: getmeili/meilisearch:v1.11.1
+          ports:
+            - containerPort: 7700
+          envFrom:
+            - secretRef:
+                name: hoarder-env
+          env:
+            - name: MEILI_NO_ANALYTICS
+              value: "true"
+          volumeMounts:
+            - name: meilisearch-data
+              mountPath: /meili_data
+      volumes:
+        - name: meilisearch-data
+          persistentVolumeClaim:
+            claimName: meilisearch-data-pvc
+---
+# Service for Meilisearch
+apiVersion: v1
+kind: Service
+metadata:
+  name: hoarder-meilisearch
+spec:
+  selector:
+    app: hoarder-meilisearch
+  ports:
+    - port: 7700
+      targetPort: 7700
+---
+# Note: You need to create the hoarder-env secret separately in the hoarder namespace
+# Example commands:
+#
+# 1. Create a secret from your existing .env file:
+#    kubectl create secret generic hoarder-env -n hoarder --from-env-file=.env
+#
+# 2. Or create it manually with specific values:
+#    kubectl create secret generic hoarder-env -n hoarder \
+#      --from-literal=HOARDER_VERSION="0.23.1" \
+#      --from-literal=OPENAI_API_KEY="your-api-key" \
+#      --from-literal=OTHER_ENV_VAR="value"

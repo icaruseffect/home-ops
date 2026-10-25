@@ -1,0 +1,42 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hoarder
+
+configMapGenerator:
+  - envs:
+      - .env
+    name: karakeep-configuration
+
+resources:
+  - namespace.yaml
+  - secret-hoarder-env.sops.yaml
+  - web-deployment.yaml
+  - web-service.yaml
+  - chrome-deployment.yaml
+  - chrome-service.yaml
+  - meilisearch-deployment.yaml
+  - meilisearch-service.yaml
+  - meilisearch-pvc.yaml
+  - data-pvc.yaml
+  - httproute.yaml
+  - cnp.yaml
+
+replacements:
+  - source:
+      fieldPath: data.KARAKEEP_VERSION
+      kind: ConfigMap
+      name: karakeep-configuration
+      version: v1
+    targets:
+      - fieldPaths:
+          - spec.template.spec.containers.0.image
+        options:
+          delimiter: ":"
+          index: 1
+        select:
+          group: apps
+          kind: Deployment
+          name: hoarder-web
+          version: v1

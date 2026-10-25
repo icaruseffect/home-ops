@@ -1,0 +1,87 @@
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: hoarder-web-policy
+  namespace: hoarder
+spec:
+  endpointSelector:
+    matchLabels:
+      app: hoarder-web
+  ingress:
+    - fromEntities:
+        - world
+        - ingress
+        - host
+        - cluster
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+  # Intentionally no egress section: any egress enforcement on this pod makes
+  # the gateway's Envoy answer "403 Access denied" to its requests for
+  # auth.${SECRET_DOMAIN} (hairpin to the node's public IP), which breaks the
+  # OIDC discovery/token calls to Authelia. Verified with test policies:
+  # ingress-only -> 200, every egress variant (host/cluster/all) -> 403.
+  # Chrome (hoarder-chrome-policy) keeps its egress restrictions.
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: hoarder-chrome-policy
+  namespace: hoarder
+spec:
+  endpointSelector:
+    matchLabels:
+      app: hoarder-chrome
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: hoarder-web
+            "k8s:io.kubernetes.pod.namespace": hoarder
+      toPorts:
+        - ports:
+            - port: "9222"
+              protocol: TCP
+  egress:
+    - toFQDNs:
+        - matchPattern: "*"
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+---
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: hoarder-meilisearch-policy
+  namespace: hoarder
+spec:
+  endpointSelector:
+    matchLabels:
+      app: hoarder-meilisearch
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: hoarder-web
+            "k8s:io.kubernetes.pod.namespace": hoarder
+      toPorts:
+        - ports:
+            - port: "7700"
+              protocol: TCP
+  egress: []

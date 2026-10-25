@@ -1,0 +1,30 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hoarder-chrome
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hoarder-chrome
+  template:
+    metadata:
+      labels:
+        app: hoarder-chrome
+    spec:
+      containers:
+        - name: chrome
+          image: ghcr.io/karakeep-app/karakeep-chrome:release
+          args:
+            - --no-sandbox
+            - --disable-gpu
+            - --disable-dev-shm-usage
+            - --hide-scrollbars
+            - --disable-blink-features=AutomationControlled
+            - --window-size=1440,900
+          ports:
+            - containerPort: 9222
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000

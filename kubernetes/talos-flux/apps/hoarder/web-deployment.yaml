@@ -1,0 +1,43 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hoarder-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hoarder-web
+  template:
+    metadata:
+      labels:
+        app: hoarder-web
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      containers:
+        - name: hoarder
+          image: ghcr.io/karakeep-app/karakeep
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: MEILI_ADDR
+              value: http://hoarder-meilisearch:7700
+            - name: BROWSER_WEB_URL
+              value: http://hoarder-chrome:9222
+            - name: DATA_DIR
+              value: /data
+            # Add OPENAI_API_KEY to the ConfigMap if necessary
+          volumeMounts:
+            - mountPath: /data
+              name: data
+          envFrom:
+            - secretRef:
+                name: hoarder-env
+            - configMapRef:
+                name: karakeep-configuration
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hoarder-data-pvc
