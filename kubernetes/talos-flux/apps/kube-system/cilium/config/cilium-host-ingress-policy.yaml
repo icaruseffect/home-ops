@@ -9,24 +9,24 @@ spec:
     matchLabels:
       topology.kubernetes.io/zone: public
   ingress:
-  - fromEntities:
-    - remote-node
-    - health
-  - toPorts:
-    - ports:
-      - port: "6443"
-        protocol: TCP
-      - port: "2379" # etcd
-        protocol: TCP
-      - port: "4240" # health checks
-        protocol: TCP
-      - port: "8472" # VXLAN
-        protocol: UDP
-      - port: "50000"
-        protocol: TCP
-      - port: "50002"
-        protocol: TCP
-      - port: "80"
-        protocol: TCP
-      - port: "443"
-        protocol: TCP
+    - fromEntities:
+        - remote-node
+        - health
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+            - port: "2379"
+              protocol: TCP
+            - port: "4240"
+              protocol: TCP
+            - port: "8472"
+              protocol: UDP
+            - port: "50000"
+              protocol: TCP
+            - port: "50002"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP

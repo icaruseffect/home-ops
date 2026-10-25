@@ -1,0 +1,36 @@
+---
+# Enables Envoy JSON access logs on the cilium-gateway Gateway API listener
+# (all *.${SECRET_DOMAIN} routes), consumed by crowdsec's cilium-envoy
+# acquisition (see kubernetes/talos-flux/apps/crowdsec/values-crowdsec.yaml).
+# Wired to the "cilium" GatewayClass via spec.parametersRef, which the
+# vendored cilium chart's cilium-gateway-api-class.yaml template does not
+# expose as a Helm value in this chart version (checked: no
+# gatewayClass.parametersRef field). parametersRef is therefore patched
+# directly onto the live GatewayClass out-of-band (see Taskfile/README note);
+# it is additive-only (Helm's 3-way merge does not touch fields absent from
+# both the old and new rendered manifest), so it survives routine `cilium`
+# HelmRelease reconciles.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumGatewayClassConfig
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  telemetry:
+    accessLogs:
+      - format: JSON
+        json:
+          timestamp: "%START_TIME%"
+          source_ip: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+          method: "%REQUEST_HEADER(:METHOD)%"
+          path: "%REQUEST_HEADER(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+          protocol: "%PROTOCOL%"
+          status: "%RESPONSE_CODE%"
+          response_flags: "%RESPONSE_FLAGS%"
+          bytes_received: "%BYTES_RECEIVED%"
+          bytes_sent: "%BYTES_SENT%"
+          duration_ms: "%DURATION%"
+          authority: "%REQUEST_HEADER(:AUTHORITY)%"
+          user_agent: "%REQUEST_HEADER(USER-AGENT?-)%"
+          upstream_host: "%UPSTREAM_HOST%"
+          gateway: "%CILIUM_GATEWAY_NAMESPACE%/%CILIUM_GATEWAY_NAME%"

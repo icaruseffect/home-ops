@@ -3,19 +3,23 @@ cluster:
   name: contabo-de-1
   id: 1
 
-# devices: enp0s25
+# debug:
+#   enabled: true
+
+rollOutCiliumPods: true
+
+devices: eth0
+
+# routingMode: tunnel
+# tunnelProtocol: vxlan
 
 encryption:
-  enabled: true
-  type: wireguard
-  wireguard:
-    userspaceFallback: true
-
-hostFirewall:
   enabled: false
+  # type: wireguard
+  # wireguard:
+  #   userspaceFallback: true
 
 hubble:
-  enabled: true
   relay:
     enabled: true
     replicas: 1
@@ -31,6 +35,16 @@ hubble:
       - flow
       - icmp
       - http
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus-stack
+  tls:
+    enabled: true
+    auto:
+      enabled: true
+      method: cronJob
+      schedule: "0 0 1 */6 *"
 
 gatewayAPI:
   enabled: true
@@ -39,18 +53,58 @@ gatewayAPI:
     nodes:
       matchLabels:
         kubernetes.io/hostname: contabo-de-1
-
-ipam:
-  mode: kubernetes
+  xffNumTrustedHops: 1
+  enableAlpn: true
 
 k8sServiceHost: 86.48.3.75
 k8sServicePort: 6443
 
 kubeProxyReplacement: true
 
+# cilium-agent was previously unbounded (BestEffort QoS) on this single,
+# memory-overcommitted node, making it the kernel OOM-killer's first target
+# under any memory pressure - killing it drops the node's CNI and cascades
+# into network blips for every pod on the node. CPU limit is generous
+# (throttling a live dataplane is worse than a temporary CPU spike, same
+# lesson as nextcloud's CPU limit, see values.yaml there).
+resources:
+  requests:
+    cpu: 100m
+    memory: 384Mi
+  limits:
+    # 1000m throttled the agent ~24% of CFS periods: BPF compiles and
+    # endpoint regenerations ran 55-99s, proxy policy updates to Envoy timed
+    # out and rolled back in a ~30s sawtooth, and the gateway answered
+    # "403 Access denied" while Envoy had no policy loaded.
+    cpu: 3000m
+    memory: 768Mi
+
+# bpf:
+#   masquerade: true
+#   datapathMode: veth
+
+ipv6:
+  enabled: true
+
+dnsProxy:
+  enabled: true
+  refreshInterval: 15s
+
+prometheus:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus-stack
+    relabelings:
+      - sourceLabels:
+          - __meta_kubernetes_pod_node_name
+        targetLabel: node
+        action: replace
+        replacement: ${1}
+
 operator:
   replicas: 1
-  enabled: true
   rollOutPods: true
   # The API server on this single node sometimes stalls for several seconds
   # (slow etcd). With the defaults (renew deadline 10s, lock request timeout 5s)
@@ -61,26 +115,48 @@ operator:
     - --leader-election-renew-deadline=45s
     - --leader-election-retry-period=5s
     - --leader-election-resource-lock-timeout=20s
+  resources:
+    requests:
+      cpu: 25m
+      memory: 96Mi
+    limits:
+      cpu: 300m
+      memory: 192Mi
   prometheus:
     serviceMonitor:
       enabled: true
       labels:
         release: prometheus-stack
-relabelings:
-  - sourceLabels:
-      - __meta_kubernetes_pod_node_name
-    targetLabel: node
-    action: replace
-    replacement: ${1}
+      relabelings:
+        - sourceLabels:
+            - __meta_kubernetes_pod_node_name
+          targetLabel: node
+          action: replace
+          replacement: ${1}
+
 l2NeighDiscovery:
-  enabled: true
+  enabled: false
+
 l2announcements:
+  enabled: false
+  interface: "eth0"
+
+externalIPs:
   enabled: true
 
+nodeIPAM:
+  enabled: true
+
+ipam:
+  mode: "cluster-pool"
+  ciliumNodeUpdateRate: "15s"
+  operator:
+    clusterPoolIPv4PodCIDRList: ["10.1.0.0/16"]
+    clusterPoolIPv4MaskSize: 24
+    clusterPoolIPv6PodCIDRList: ["fd00:1::/104"] # was /64
+    clusterPoolIPv6MaskSize: 120
 tls:
   secretSync:
-    # -- Enable synchronization of Secrets for TLS Interception. If disabled and
-    # tls.readSecretsOnlyFromSecretsNamespace is set to 'false', then secrets will be read directly by the agent.
     enabled: false
 
 securityContext:
@@ -98,6 +174,14 @@ securityContext:
       - SETGID
       - SETUID
       - NET_BIND_SERVICE
+    mountCgroup:
+      - SYS_ADMIN
+      - SYS_CHROOT
+      - SYS_PTRACE
+    applySysctlOverwrites:
+      - SYS_ADMIN
+      - SYS_CHROOT
+      - SYS_PTRACE
     cleanCiliumState:
       - NET_ADMIN
       - SYS_ADMIN
@@ -108,5 +192,33 @@ cgroup:
     enabled: false
   hostRoot: "/sys/fs/cgroup"
 
+envoy:
+  enabled: true
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 64Mi
+    limits:
+      cpu: 2000m
+      memory: 256Mi
+  securityContext:
+    capabilities:
+      keepCapNetBindService: true
+      envoy:
+        - NET_BIND_SERVICE
+        - NET_ADMIN
+        - PERFMON
+        - BPF
+
+  prometheus:
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: prometheus-stack
+
 envoyConfig:
   enabled: true
+
+extraConfig:
+  # enable-tcx: "false"
+  enable-wireguard: "false"

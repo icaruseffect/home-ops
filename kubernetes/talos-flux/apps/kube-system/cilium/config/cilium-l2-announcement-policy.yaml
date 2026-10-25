@@ -6,9 +6,9 @@ metadata:
   name: l2-policy
 spec:
   loadBalancerIPs: true
+  externalIPs: true
   interfaces:
-    - ^eth[0-9]+
-    - ^enx.+
+    - eth0
   nodeSelector:
     matchLabels:
       kubernetes.io/os: linux
