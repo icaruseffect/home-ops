@@ -1,0 +1,27 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/image.toolkit.fluxcd.io/imagerepository_v1.json
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: uptime-kuma
+  namespace: flux-system
+spec:
+  image: louislam/uptime-kuma
+  interval: 1h
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/image.toolkit.fluxcd.io/imagepolicy_v1.json
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: uptime-kuma
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: uptime-kuma
+  policy:
+    semver:
+      range: ">=1.23.0 <2.0.0"
+# NOTE: deliberately NOT referenced by app/kustomization.yaml (it sets
+# namespace: observability and would rewrite these flux-system CRs), and the
+# HR tag keeps its digest pin (1.23.13@sha256:...), so no setter marker is
+# wired: automation would strip the digest. Bumps stay manual for now.
