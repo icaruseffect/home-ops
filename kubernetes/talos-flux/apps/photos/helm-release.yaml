@@ -94,10 +94,12 @@ spec:
             resources:
               requests:
                 cpu: 100m
-                memory: 512Mi
+                memory: 1Gi
               limits:
                 cpu: 2000m
-                memory: 2Gi
+                # OOMKilled at 2Gi during bulk uploads (immich-go runs 20 uploads
+                # at once and the server buffers large videos)
+                memory: 4Gi
 
       ml:
         type: deployment
