@@ -1,0 +1,23 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: stalwart-metrics
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stalwart-mail
+  namespaceSelector:
+    matchNames:
+      - mail
+  endpoints:
+    - port: metrics
+      interval: 30s
+      basicAuth:
+        username:
+          name: stalwart-mail-env
+          key: METRICS_USERNAME
+        password:
+          name: stalwart-mail-env
+          key: METRICS_SECRET

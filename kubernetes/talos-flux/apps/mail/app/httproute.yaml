@@ -19,6 +19,19 @@ spec:
         - path:
             type: PathPrefix
             value: /
+      # CrowdSec ban enforcement via envoy ext_authz (bouncer in ns crowdsec;
+      # requires a ReferenceGrant entry for this namespace)
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: GRPC
+            grpc: {}
+            backendRef:
+              group: ""
+              kind: Service
+              name: envoy-crowdsec-bouncer
+              namespace: crowdsec
+              port: 8080
       backendRefs:
         - name: stalwart-mail
           port: 80

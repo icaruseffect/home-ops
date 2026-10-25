@@ -1,0 +1,197 @@
+---
+replicaCount: 1
+
+image:
+  registry: ghcr.io
+  repository: stalwartlabs/stalwart
+  pullPolicy: IfNotPresent
+  tag: ""
+
+# DataStore descriptor (v0.16+ config.json model). Derived from the live v0.15.5
+# server's `store.rocksdb.path: /data` via `migrate_v016.py convert
+# --patch-paths /data=/var/lib/stalwart` — the new chart mounts the persistent
+# volume at /var/lib/stalwart instead of /data.
+config:
+  "@type": "RocksDb"
+  path: "/var/lib/stalwart"
+
+secrets:
+  # We provide stalwart-mail-env ourselves via secret-env-stalwart.sops.yaml
+  # instead of letting the chart render one from plaintext values.
+  create: false
+
+# Explicitly empty: the chart's own default bakes in STALWART_RECOVERY_MODE=1 /
+# STALWART_RECOVERY_ADMIN, which must NOT be the steady-state GitOps config.
+# STALWART_RECOVERY_ADMIN is a break-glass admin credential and is only enabled
+# as a temporary manual override (see the break-glass recipe below).
+#
+# Note the chart's default value is broken as written:
+#   value: "admin:$(FALLBACK_ADMIN_SECRET)"
+# Kubernetes `$(VAR)` expansion only resolves against *other entries in `env`* —
+# never against `envFrom` — so with the secret supplied via envFrom (as it is
+# here) the literal string `admin:$(FALLBACK_ADMIN_SECRET)` is passed through as
+# the password. Use an explicit secretKeyRef instead, which needs no expansion.
+#
+# Break-glass recipe (v0.16), verified live 2026-09-11 on v0.16.20 — note that
+# STALWART_RECOVERY_ADMIN alone is enough and STALWART_RECOVERY_MODE must stay
+# unset: recovery *mode* boots a limited server on its own port and takes mail
+# offline, whereas the recovery *admin* leaves all listeners serving normally.
+# Applying or removing this env costs one pod restart each way (single replica,
+# RWO volume), so budget two short outages for the round trip.
+#
+#   1. Create a throwaway secret holding the credential (never commit it):
+#        kubectl create secret generic stalwart-recovery-admin -n mail \
+#          --from-literal=STALWART_RECOVERY_ADMIN="admin:$(openssl rand -base64 24)"
+#   2. Uncomment the block below, regenerate the values ConfigMap, and let the
+#      HelmRelease roll the StatefulSet.
+#   3. Authenticate as `admin` (OAuth, not basic auth — v0.16 dropped
+#      `authentication.fallback-admin` entirely, which is why the old
+#      FALLBACK_ADMIN_SECRET key was removed from secret-env-stalwart.sops.yaml):
+#        POST /api/auth {"type":"authCode","accountName":"admin",
+#          "accountSecret":"<pw>","clientId":"stalwart-webui",
+#          "redirectUri":"https://mail.${SECRET_DOMAIN}/admin/"}  -> client_code
+#        POST /auth/token  grant_type=authorization_code&code=<client_code>
+#          &client_id=stalwart-webui&redirect_uri=...                -> Bearer token
+#      Administration is JMAP: POST /jmap/ with
+#      using: ["urn:ietf:params:jmap:core","urn:stalwart:jmap"] and methods on
+#      `x:Account` (/query, /get, /set). GET /api/schema (follow the 302; the
+#      body is gzipped) returns the full object model.
+#   4. Revert the env block, roll again, and delete the throwaway secret.
+#
+# env:
+#   - name: STALWART_RECOVERY_ADMIN
+#     valueFrom:
+#       secretKeyRef:
+#         name: stalwart-recovery-admin
+#         key: STALWART_RECOVERY_ADMIN
+env: []
+
+envFrom:
+  - secretRef:
+      name: stalwart-mail-env
+
+# Stalwart caches TLS certificates at process startup and does not watch the
+# filesystem for changes (see Certificate object jak1evakaaaa, File-variant
+# paths pointing at the certificate volume below). stakater/reloader (already
+# deployed cluster-wide, kube-tools/reloader) rolling-restarts this StatefulSet
+# whenever stalwart-mail-cert's content changes, which is enough for Stalwart
+# to pick up the renewed cert on the next startup.
+podAnnotations:
+  secret.reloader.stakater.io/reload: "stalwart-mail-cert"
+
+# Chart defaults (initialDelaySeconds: 5, failureThreshold: 3, timeoutSeconds: 1)
+# are too tight for this cluster's known intermittent Cilium/CNI probe-timeout
+# flakiness (pre-existing, unrelated to this app — see migration plan). Loosened
+# to survive that without masking a genuinely hung process.
+livenessProbe:
+  httpGet:
+    path: /healthz/live
+    port: http
+    httpHeaders:
+      - name: "X-Forwarded-For"
+        value: "127.0.0.1"
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 6
+  timeoutSeconds: 5
+readinessProbe:
+  httpGet:
+    path: /healthz/ready
+    port: http
+    httpHeaders:
+      - name: "X-Forwarded-For"
+        value: "127.0.0.1"
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 6
+  timeoutSeconds: 5
+
+service:
+  type: ClusterIP
+  ipFamilies: ["IPv4"]
+  ipFamilyPolicy: "SingleStack"
+  ports:
+    smtp: 25
+    submission: 587
+    submissions: 465
+    imap: 143
+    imaptls: 993
+    pop3: 110
+    pop3s: 995
+    sieve: 4190
+    http: 80
+    https: 443
+
+ingress:
+  enabled: true
+  className: "cilium"
+  annotations:
+    kubernetes.io/ingress.class: cilium
+  hosts:
+    - host: mail.${SECRET_DOMAIN}
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: stalwart-mail-cert
+      hosts:
+        - mail.${SECRET_DOMAIN}
+
+certificate:
+  # Explicit (not just relying on the chart's own default of "<fullname>-cert"):
+  # the chart's statefulset template only mounts /opt/stalwart/etc/certs (which
+  # Stalwart's internal Certificate object reads via its File-variant paths) if
+  # EITHER this is set OR certmanager.enabled is true. Since certmanager.enabled
+  # is false below, this alone keeps the mount rendering. Confirmed live
+  # 2026-08-19 after certmanager.enabled:false silently dropped the volume and
+  # broke IMAPS/submissions (self-signed fallback) while HTTPS stayed fine
+  # (terminated separately by the Ingress straight from this same Secret).
+  secretName: stalwart-mail-cert
+  certmanager:
+    # Disabled: the Ingress's own tls[].secretName (stalwart-mail-cert, above)
+    # is already managed by cert-manager's ingress-shim and has been issuing/
+    # renewing successfully for a long time (Certificate/stalwart-mail-cert,
+    # owned by the Ingress). Enabling this makes the chart render its own
+    # second Certificate object (named after the release fullname) targeting
+    # the SAME secretName, which fights the ingress-shim one over ownership of
+    # the Secret ("IncorrectCertificate" / "two conflicting Certificates").
+    # Confirmed live 2026-08-19.
+    enabled: false
+    issuerRef:
+      group: cert-manager.io
+      kind: ClusterIssuer
+      name: letsencrypt-production
+    dnsNames:
+      - "mail.${SECRET_DOMAIN}"
+
+prometheus:
+  servicemonitor:
+    # Standalone servicemonitor.yaml (in the observability namespace) is used
+    # instead, since it needs a namespaceSelector across mail -> observability.
+    enabled: false
+
+grafana:
+  dashboards:
+    enabled: true
+    labels:
+      grafana_dashboard: "1"
+
+persistence:
+  enabled: true
+  storageClass: openebs-hostpath
+  # Reuse the existing production PVC. NOTE: renamed to stalwart-mail-v2 during
+  # the v0.16 cutover — the original "stalwart-mail" PVC carried Helm release
+  # ownership annotations from the old chart (auto-provisioned, not
+  # existingClaim), so upgrading the release pruned it once the new chart
+  # stopped rendering it. Data was cloned to a fresh PVC before that happened;
+  # see the migration plan for the full incident writeup. Must NOT be left
+  # unset, or the chart will provision a new empty volume.
+  existingClaim: stalwart-mail-v2
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -6,12 +6,15 @@ namespace: mail
 resources:
   - helm-release.yaml
   - httproute.yaml
+  - mail-ports-external.yaml
+  - secret-env-stalwart.sops.yaml
+  - servicemonitor.yaml
 configMapGenerator:
   - name: values-stalwart-mail
     namespace: mail
     files:
-      - values-stalwart-mail.yaml
+      - values.yaml
 configurations:
   - kustomizeconfig.yaml
 generatorOptions:
-  disableNameSuffixHash: false
+  disableNameSuffixHash: true

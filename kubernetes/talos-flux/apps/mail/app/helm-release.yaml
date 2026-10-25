@@ -10,10 +10,10 @@ spec:
   chart:
     spec:
       chart: stalwart-mail
-      version: 6.6.9
+      version: "2.0.x"
       sourceRef:
-        kind: OCIRepository
-        name: stalwart-mail-charts
+        kind: HelmRepository
+        name: wrenix-charts
         namespace: flux-system
   install:
     remediation:
@@ -26,3 +26,4 @@ spec:
   valuesFrom:
     - kind: ConfigMap
       name: values-stalwart-mail
+      valuesKey: values.yaml

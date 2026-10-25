@@ -1,0 +1,48 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stalwart-mail-external
+  namespace: mail
+spec:
+  type: ClusterIP
+  externalIPs:
+    - ${SECRET_PUBLIC_IP4}
+    - ${SECRET_PUBLIC_IP6}
+  selector:
+    app.kubernetes.io/component: main
+    app.kubernetes.io/instance: stalwart-mail
+    app.kubernetes.io/name: stalwart-mail
+  ports:
+    - name: smtp
+      port: 25
+      protocol: TCP
+      targetPort: smtp
+    - name: pop3
+      port: 110
+      protocol: TCP
+      targetPort: pop3
+    - name: imap
+      port: 143
+      protocol: TCP
+      targetPort: imap
+    - name: submissions
+      port: 465
+      protocol: TCP
+      targetPort: submissions
+    - name: submission
+      port: 587
+      protocol: TCP
+      targetPort: submission
+    - name: imaps
+      port: 993
+      protocol: TCP
+      targetPort: imaptls
+    - name: pop3s
+      port: 995
+      protocol: TCP
+      targetPort: pop3s
+    - name: sieve
+      port: 4190
+      protocol: TCP
+      targetPort: sieve
