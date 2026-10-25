@@ -1,0 +1,35 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Explicit child list so the apps-sync build does not recurse into
+# uncommitted/WIP directories (langfuse, workflow, calendarsync, site,
+# bootstrap, terminagent, velociraptor, mcp).
+resources:
+  - ./auth/authentik
+  - ./auth/authelia
+  - ./books/stacks
+  - ./cert-manager
+  - ./cloud
+  - ./crowdsec
+  - ./crowdsec-bouncer
+  - ./database
+  - ./envoy-crowdsec-bouncer
+  - ./flux-system
+  - ./github
+  - ./hoarder
+  - ./homeassistant
+  - ./kube-system
+  - ./kube-tools
+  - ./localai
+  - ./mail
+  - ./mollysocket
+  - ./ntfy
+  - ./observability
+  - ./openebs-system
+  - ./openwebui
+  - ./photos
+  - ./reader
+  - ./s3proxy
+  - ./velero
+  - ./volsync

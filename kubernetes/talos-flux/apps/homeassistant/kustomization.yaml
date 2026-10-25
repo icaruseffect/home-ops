@@ -4,5 +4,4 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - backend.yaml
-  - referencegrants.yaml
   - httproute.yaml

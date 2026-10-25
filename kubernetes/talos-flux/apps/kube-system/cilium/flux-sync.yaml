@@ -6,7 +6,8 @@ metadata:
   name: apps-cilium
   namespace: flux-system
   labels:
-    substitution.flux.home.arpa/enabled: "true"
+    # values.yaml uses ${1} regex backrefs, which envsubst strict mode rejects
+    substitution.flux.home.arpa/disabled: "true"
 spec:
   targetNamespace: kube-system
   commonMetadata:

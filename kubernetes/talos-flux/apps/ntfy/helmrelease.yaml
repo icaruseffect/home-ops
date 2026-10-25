@@ -24,7 +24,7 @@ spec:
       webPush.keys.create: true
       # behindProxy: true
       enableLogin: true
-      baseURL: https://ntfy.${SECRET-DOMAIN}
+      baseURL: https://ntfy.${SECRET_DOMAIN}
       cache.file: /data/auth.db
       behindProxy: true
       enableReservations: true
@@ -35,13 +35,13 @@ spec:
       annotations:
         cert-manager.io/cluster-issuer: letsencrypt-production
       hosts:
-        - host: ntfy.${SECRET-DOMAIN}
+        - host: ntfy.${SECRET_DOMAIN}
           paths:
             - path: /
               pathType: Prefix
       tls:
         - hosts:
-            - ntfy.${SECRET-DOMAIN}
+            - ntfy.${SECRET_DOMAIN}
           secretName: ntfy-tls
     persistence:
       enabled: true
