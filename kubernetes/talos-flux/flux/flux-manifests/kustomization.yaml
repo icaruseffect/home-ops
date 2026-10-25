@@ -122,13 +122,3 @@ patches:
     target:
       kind: Deployment
       name: helm-controller
-  # Keep reconciliation disabled: kustomize-controller stays scaled to 0/0
-  # (manual kubectl apply workflow; see CLAUDE.md). Re-enable by setting
-  # replicas to 1 and removing this patch.
-  - patch: |
-      - op: replace
-        path: /spec/replicas
-        value: 0
-    target:
-      kind: Deployment
-      name: kustomize-controller
