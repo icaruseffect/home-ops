@@ -1,0 +1,121 @@
+# # Create a Secret for SSH private key
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: sftp-ssh-key
+# type: Opaque
+# stringData:
+#   # Replace with your base64 encoded SSH private key and public key
+#   id_rsa: "BASE64_ENCODED_SSH_PRIVATE_KEY"
+#   id_rsa.pub: "BASE64_ENCODED_SSH_PUBLIC_KEY"
+#   # SSH config file content
+#   config: |
+#     Host *
+#       StrictHostKeyChecking yes
+#       IdentityFile ~/.ssh/id_rsa
+#       PreferredAuthentications publickey
+#       PasswordAuthentication no
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: restic-password
+type: Opaque
+stringData:
+  #ENC[AES256_GCM,data:RaQEfvi7SedH62mh1v1EaCBaPkZAqtZPdO3c9KoKLjdYILQwwluq2F9bsIiRcz/qX/9whqLNGFsB4mei,iv:tcKOyM4bfvbHogzGoWQ9fo4AIYUW8g6vmTFe6GwEcNU=,tag:R56mXsqg5bKOkwGjqzjkEw==,type:comment]
+  password: ENC[AES256_GCM,data:wysRAtrq3SCbIMQMQy6PmWxlWrBzFCRg44zZPw==,iv:xulAq5HUvmZmkQxvbnUYweEPXhYfHIbXuKnzDH25AYg=,tag:7Iu8b3LvNYfNsV4YGa9vXQ==,type:str]
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBGRWZlRzJ1dHo3aWsvMG0z
+        WDkzeDBXd0Z6QjVHRnRNWmxoc3BlbldPL2pFClQ2UHlMNFhrOVNUWHprY044Sm0x
+        TTluOGdUSTBtZWoyS3NNWGJDUnY5WUUKLS0tIEpPSG5GMHh6eEk2Vk5WN0RWWkJv
+        a2NSczhxNWRpOVIvcGVZN0VDVCs0QWMKA7hVHbktQmlMHQkuVTje54rO3BbdPBUr
+        LMi1nseKFjOC90399ZYBIcQsU+l9dkfAWHXsx8CykSe82pFg/1jGqQ==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-10-25T19:33:16Z"
+  mac: ENC[AES256_GCM,data:rbZRvwq5GhqT2N1WxminZi6lEXBqRAGKujQXts7cZa96FsUq2kaBBC2mtFm3uMALT6rzypC7473XIwNiMvOzaQXJ5Ir0sdOjsKolHjGWg5QjEUSm0pkwfUCeCMijak6cl5u4ioKbH/dTMA4f+KoDeWti4T5NMSdXV3hpek707iM=,iv:CO7WEW8cYnxFeKDJptTCY2vNEd7o2/AP+F6Ib9UAnZg=,tag:it3K242+P2bWsO04mGJxgg==,type:str]
+  version: 3.13.3
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restic-restore
+spec:
+  template:
+    spec:
+      containers:
+        - name: restic
+          image: restic/restic:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Create .ssh directory with correct permissions
+              #mkdir -p ~/.ssh
+              #chmod 700 ~/.ssh
+
+              # Add host key to known_hosts
+              #ssh-keyscan -H $SFTP_HOST >> ~/.ssh/known_hosts
+              #chmod 600 ~/.ssh/known_hosts
+
+              # Test SSH connection
+              #ssh -v -T $SFTP_USER@$SFTP_HOST || exit 1
+
+              # Run restore command
+              #restic -r sftp:$SFTP_USER@$SFTP_HOST:$BACKUP_PATH restore latest --target /restore
+              restic -r rclone:contabo-s3:velero/homelab/restic/paperless
+          env:
+            - name: RESTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: restic-password
+                  key: password
+            - name: SFTP_HOST
+              value: your-sftp-host
+            - name: SFTP_USER
+              value: your-sftp-username
+            - name: BACKUP_PATH
+              value: /path/to/backup
+          volumeMounts:
+            - name: ssh-dir
+              mountPath: /root/.ssh
+            - name: restore-data
+              mountPath: /restore
+      volumes:
+        - name: ssh-dir
+          secret:
+            secretName: sftp-ssh-key
+            defaultMode: 384
+            items:
+              - key: id_rsa
+                path: id_rsa
+                mode: 384
+              - key: id_rsa.pub
+                path: id_rsa.pub
+                mode: 420
+              - key: config
+                path: config
+                mode: 384
+        - name: restore-data
+          # Define your volume for restored data (e.g., emptyDir, PVC, etc.)
+          emptyDir: {}
+      restartPolicy: Never
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBGRWZlRzJ1dHo3aWsvMG0z
+        WDkzeDBXd0Z6QjVHRnRNWmxoc3BlbldPL2pFClQ2UHlMNFhrOVNUWHprY044Sm0x
+        TTluOGdUSTBtZWoyS3NNWGJDUnY5WUUKLS0tIEpPSG5GMHh6eEk2Vk5WN0RWWkJv
+        a2NSczhxNWRpOVIvcGVZN0VDVCs0QWMKA7hVHbktQmlMHQkuVTje54rO3BbdPBUr
+        LMi1nseKFjOC90399ZYBIcQsU+l9dkfAWHXsx8CykSe82pFg/1jGqQ==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-10-25T19:33:16Z"
+  mac: ENC[AES256_GCM,data:rbZRvwq5GhqT2N1WxminZi6lEXBqRAGKujQXts7cZa96FsUq2kaBBC2mtFm3uMALT6rzypC7473XIwNiMvOzaQXJ5Ir0sdOjsKolHjGWg5QjEUSm0pkwfUCeCMijak6cl5u4ioKbH/dTMA4f+KoDeWti4T5NMSdXV3hpek707iM=,iv:CO7WEW8cYnxFeKDJptTCY2vNEd7o2/AP+F6Ib9UAnZg=,tag:it3K242+P2bWsO04mGJxgg==,type:str]
+  version: 3.13.3

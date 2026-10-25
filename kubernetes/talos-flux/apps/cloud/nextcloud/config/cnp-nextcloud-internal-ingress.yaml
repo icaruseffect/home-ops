@@ -1,0 +1,43 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: nextcloud-internal-ingress
+  namespace: cloud
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: nextcloud
+      k8s:app.kubernetes.io/instance: nextcloud
+      k8s:app.kubernetes.io/component: app
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cloud
+        - matchExpressions:
+            - key: k8s:app.kubernetes.io/name
+              operator: In
+              values:
+                - vdirsyncer
+                - caldav-exporter
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+  egress:
+    - toFQDNs:
+        - matchPattern: "*"
+    # DNS
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

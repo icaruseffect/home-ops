@@ -2,10 +2,20 @@
 # yaml-language-server: $schema=https://json.schemastore.org/kustomization
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# TODO: decide if i want to add the config directory or not
 resources:
-  - ./patch-service-push.yaml
-patches:
-  - path: patch-service-push.yaml
-    target:
-      kind: Service
-      name: nextcloud
+  - remoteip.conf
+  - cnp-nextcloud-internal-ingress.yaml
+  - cnp-nextcloud-metrics.yaml
+
+configMapGenerator:
+  - name: nextcloud-apache-conf
+    files:
+      - remoteip.conf
+    options:
+      disableNameSuffixHash: true
+  - name: nextcloud-log-agent
+    files:
+      - nextcloud-log-agent.alloy
+    options:
+      disableNameSuffixHash: true

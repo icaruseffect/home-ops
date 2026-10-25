@@ -8,4 +8,4 @@ metadata:
 data:
   enable-maintenance-mode.sh: |
     #!/bin/bash
-    runuser -u www-data -g www-data php occ maintenance:mode --on
+    runuser -u www-data -g www-data -- php occ maintenance:mode --on

@@ -1,0 +1,18 @@
+loki.source.file "nextcloud" {
+  targets = [
+    {__path__ = "/var/www/html/data/nextcloud.log", job = "nextcloud-php"},
+    {__path__ = "/var/www/html/data/audit.log",     job = "nextcloud-audit"},
+  ]
+  forward_to = [loki.write.greptime.receiver]
+}
+
+loki.write "greptime" {
+  endpoint {
+    url = "http://greptimedb-standalone.observability.svc.cluster.local:4000/v1/loki/api/v1/push"
+    headers = {
+      "x-greptime-db-name"        = "logs",
+      "x-greptime-pipeline-name"  = "k8s_logs",
+      "x-greptime-log-table-name" = "app_logs",
+    }
+  }
+}

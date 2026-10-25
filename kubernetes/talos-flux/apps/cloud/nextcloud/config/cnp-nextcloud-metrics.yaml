@@ -1,0 +1,23 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: nextcloud-metrics
+  namespace: cloud
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: nextcloud
+      k8s:app.kubernetes.io/instance: nextcloud
+      k8s:app.kubernetes.io/component: metrics
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            k8s:app.kubernetes.io/name: prometheus
+            k8s:app.kubernetes.io/instance: prometheus # matches the statefulset pods
+            k8s:prometheus: prometheus # extra label unique to that Prometheus
+      toPorts:
+        - ports:
+            - port: "9205"
+              protocol: TCP
