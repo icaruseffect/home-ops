@@ -13,12 +13,22 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus-prometheus:9090/
+    url: http://greptimedb-standalone.observability.svc.cluster.local:4000/v1/prometheus
     isDefault: true
-  - name: Loki
-    type: loki
+  - name: GreptimeDB
+    type: info8fcc-greptimedb-datasource
     access: proxy
-    url: http://loki-gateway:80/
+    uid: greptimedb
+    jsonData:
+      host: http://greptimedb-standalone.observability.svc.cluster.local:4000
+      protocol: http
+      defaultDatabase: public
+      logs:
+        defaultDatabase: logs
+        defaultTable: app_logs
+        timeColumn: greptime_timestamp
+        messageColumn: message
+        levelColumn: level
   - name: GitHub
     type: grafana-github-datasource
     jsonData:

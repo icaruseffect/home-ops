@@ -1,0 +1,41 @@
+---
+alloy:
+  configMap:
+    create: false
+    name: alloy-config
+    key: config.alloy
+
+  clustering:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  storagePath: /tmp/alloy
+
+# The default 30s reload timeout is shorter than a full config evaluation on
+# this node (27-83s per component under load), so the reloader retried every
+# 30s and each retry restarted a reload: a self-feeding loop. customArgs
+# replaces the chart's default args, so they are restated here.
+configReloader:
+  customArgs:
+    - --watched-dir=/etc/alloy
+    - --reload-url=http://localhost:12345/-/reload
+    - --reload-timeout=5m
+
+controller:
+  type: deployment
+  replicas: 1
+
+rbac:
+  create: true
+
+crds:
+  create: false
+
+serviceMonitor:
+  enabled: false

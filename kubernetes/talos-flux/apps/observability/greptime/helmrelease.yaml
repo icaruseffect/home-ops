@@ -1,0 +1,29 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: greptimedb
+  namespace: observability
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: greptimedb-standalone
+      version: "0.4.x"
+      sourceRef:
+        kind: HelmRepository
+        name: greptime
+        namespace: observability
+      interval: 1h
+  releaseName: greptimedb-standalone
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: ConfigMap
+      name: greptimedb-values
+      valuesKey: values-greptimedb.yaml

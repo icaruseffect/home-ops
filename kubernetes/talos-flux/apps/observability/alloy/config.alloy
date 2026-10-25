@@ -1,0 +1,302 @@
+// ---------- sink ----------
+prometheus.remote_write "greptime" {
+  endpoint {
+    url = "http://greptimedb-standalone.observability.svc.cluster.local:4000/v1/prometheus/write?db=public"
+
+    queue_config {
+      capacity             = 10000
+      max_samples_per_send = 2000
+      max_shards           = 3
+    }
+  }
+
+  wal {
+    truncate_frequency = "30m"
+    max_keepalive_time = "2h"
+  }
+}
+
+// ---------- ServiceMonitor / PodMonitor consumption ----------
+prometheus.operator.servicemonitors "primary" {
+  forward_to = [prometheus.relabel.operator_filter.receiver]
+
+  scrape {
+    default_scrape_interval = "60s"
+  }
+}
+
+prometheus.operator.podmonitors "primary" {
+  forward_to = [prometheus.relabel.operator_filter.receiver]
+
+  scrape {
+    default_scrape_interval = "60s"
+  }
+}
+
+// cilium-envoy alone exposes ~3.2k histogram bucket series per scrape
+// (per-cluster upstream_rq_per_cx, cx_length_ms, cx_connect_ms, ...).
+prometheus.relabel "operator_filter" {
+  forward_to = [prometheus.remote_write.greptime.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex  = "envoy_.*_bucket"
+    action = "drop"
+  }
+}
+
+// ---------- kubelet ----------
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+discovery.relabel "kubelet" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    target_label = "__address__"
+    replacement  = "kubernetes.default.svc.cluster.local:443"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    regex         = "(.+)"
+    target_label  = "__metrics_path__"
+    replacement   = "/api/v1/nodes/${1}/proxy/metrics"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "node"
+  }
+}
+
+prometheus.scrape "kubelet" {
+  targets           = discovery.relabel.kubelet.output
+  forward_to        = [prometheus.remote_write.greptime.receiver]
+  job_name          = "kubelet"
+  scheme            = "https"
+  scrape_interval   = "60s"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+  tls_config {
+    ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = true
+  }
+}
+
+// ---------- cAdvisor ----------
+discovery.relabel "cadvisor" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    target_label = "__address__"
+    replacement  = "kubernetes.default.svc.cluster.local:443"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    regex         = "(.+)"
+    target_label  = "__metrics_path__"
+    replacement   = "/api/v1/nodes/${1}/proxy/metrics/cadvisor"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label  = "node"
+  }
+}
+
+prometheus.scrape "cadvisor" {
+  targets           = discovery.relabel.cadvisor.output
+  forward_to        = [prometheus.relabel.cadvisor_filter.receiver]
+  job_name          = "cadvisor"
+  scheme            = "https"
+  scrape_interval   = "60s"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+  tls_config {
+    ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = true
+  }
+}
+
+// Drop the cAdvisor histogram buckets and per-device noise.
+prometheus.relabel "cadvisor_filter" {
+  forward_to = [prometheus.remote_write.greptime.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex = "container_(network_tcp_usage_total|network_udp_usage_total|tasks_state|memory_failures_total|blkio_device_usage_total)"
+    action = "drop"
+  }
+  rule {
+    source_labels = ["__name__"]
+    regex  = "container_.*_bucket"
+    action = "drop"
+  }
+  // Per-interface packet/error/drop counters: ~3.4k series per scrape.
+  // Keep the *_bytes_total counters.
+  rule {
+    source_labels = ["__name__"]
+    regex  = "container_network_(receive|transmit)_(packets|packets_dropped|errors)_total"
+    action = "drop"
+  }
+}
+
+// ---------- apiserver ----------
+discovery.kubernetes "apiserver" {
+  role = "endpoints"
+
+  namespaces {
+    names = ["default"]
+  }
+}
+
+discovery.relabel "apiserver" {
+  targets = discovery.kubernetes.apiserver.targets
+
+  rule {
+    source_labels = [
+      "__meta_kubernetes_service_name",
+      "__meta_kubernetes_endpoint_port_name",
+    ]
+    regex  = "kubernetes;https"
+    action = "keep"
+  }
+}
+
+prometheus.scrape "apiserver" {
+  targets           = discovery.relabel.apiserver.output
+  forward_to        = [prometheus.relabel.apiserver_filter.receiver]
+  job_name          = "apiserver"
+  scheme            = "https"
+  scrape_interval   = "60s"
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+  tls_config {
+    ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = true
+  }
+}
+
+// This one job is the single biggest cardinality source in a default
+// kube-prometheus-stack. Drop the buckets outright.
+prometheus.relabel "apiserver_filter" {
+  forward_to = [prometheus.remote_write.greptime.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex = "apiserver_request_duration_seconds_bucket|apiserver_response_sizes_bucket|etcd_request_duration_seconds_bucket|apiserver_watch_events_sizes_bucket"
+    action = "drop"
+  }
+  // Remaining apiserver histograms (~31k samples per scrape). _sum/_count
+  // are kept, so averages and rates still work; only quantiles are lost.
+  rule {
+    source_labels = ["__name__"]
+    regex = "(apiserver_watch_events_dispatch_duration_seconds|apiserver_request_sli_duration_seconds|apiserver_watch_list_duration_seconds|apiserver_storage_list_duration_seconds|apiserver_request_body_size_bytes|apiserver_watch_cache_read_wait_seconds|apiserver_watch_cache_initialization_duration_seconds|informer_processing_latency_seconds)_bucket"
+    action = "drop"
+  }
+}
+
+// ---------- logs -> greptime ----------
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "pod_logs" {
+  targets = discovery.kubernetes.pods.targets
+
+  // Only tail running pods; Completed/Failed job pods (e.g. velero kopia-maintain
+  // jobs) otherwise keep spawning tailers that can never connect.
+  rule {
+    source_labels = ["__meta_kubernetes_pod_phase"]
+    regex         = "Pending|Succeeded|Failed|Unknown"
+    action        = "drop"
+  }
+  // Low-value sidecars.
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    regex         = "config-reloader|grafana-sc-dashboard|plugin-barman-cloud"
+    action        = "drop"
+  }
+  // Alloy's own logs: tailing itself is a feedback loop while it is retrying.
+  rule {
+    source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    regex         = "observability;alloy"
+    action        = "drop"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    target_label  = "app"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    regex         = "(.*);(\\S+)"
+    target_label  = "job"
+    replacement   = "${1}/${2}"
+  }
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pod_logs.output
+  forward_to = [loki.process.filter.receiver]
+}
+
+// Drop kubelet startup/readiness/liveness probe noise at the source.
+loki.process "filter" {
+  stage.drop {
+    expression  = ".*kube-probe.*"
+    drop_counter_reason = "kube-probe"
+  }
+  stage.drop {
+    expression  = "GET /healthz HTTP"
+    drop_counter_reason = "healthz"
+  }
+  stage.drop {
+    expression  = "GET /health HTTP"
+    drop_counter_reason = "health"
+  }
+
+  // Content-based noise (nearly every line is "info", so level filters do
+  // not help). Measured over 15 min: stalwart ~20k, greptimedb ~4k, flux ~1.3k.
+  // Stalwart logs DEBUG 'Cache hit' lines on every request.
+  stage.match {
+    selector = `{namespace="mail"} |~ "^\\S+ DEBUG "`
+    action   = "drop"
+    drop_counter_reason = "stalwart-debug"
+  }
+  // GreptimeDB's own flush/compaction/manifest chatter; WARN/ERROR are kept.
+  stage.match {
+    selector = `{namespace="observability", app="greptimedb-standalone"} |~ "\"level\":\"INFO\""`
+    action   = "drop"
+    drop_counter_reason = "greptimedb-info"
+  }
+  // Flux steady-state messages; real errors do not match these.
+  stage.match {
+    selector = `{namespace="flux-system"} |~ "no changes since last reconcil|release in-sync with desired state|discarding event, no alerts found"`
+    action   = "drop"
+    drop_counter_reason = "flux-steady-state"
+  }
+  forward_to = [loki.write.greptime.receiver]
+}
+
+loki.write "greptime" {
+  endpoint {
+    url = "http://greptimedb-standalone.observability.svc.cluster.local:4000/v1/loki/api/v1/push"
+    headers = {
+      "x-greptime-db-name"        = "logs",
+      "x-greptime-pipeline-name"  = "k8s_logs",
+      "x-greptime-log-table-name" = "app_logs",
+    }
+  }
+}
