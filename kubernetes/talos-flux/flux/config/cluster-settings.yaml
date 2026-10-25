@@ -9,3 +9,4 @@ metadata:
 data:
   SETTING_CLUSTERNAME: contabo-de-1
   SETTING_TZ: Europe/Berlin
+  CLUSTER_INGRESS: cililum

@@ -32,7 +32,6 @@ spec:
   wait: true
   timeout: 3m
   dependsOn:
-    - name: apps-kube-prometheus-stack
 
 ---
 # yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/kustomize.toolkit.fluxcd.io/kustomization_v1.json
