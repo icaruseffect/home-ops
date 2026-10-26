@@ -1,0 +1,21 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-metrics-server-to-kubelet
+  labels:
+    app.kubernetes.io/name: cilium-config
+spec:
+  description: Allow metrics-server to access kubelet metrics on port 10250
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:app.kubernetes.io/name: metrics-server
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP
+  nodeSelector:
+    matchLabels:
+      topology.kubernetes.io/zone: public

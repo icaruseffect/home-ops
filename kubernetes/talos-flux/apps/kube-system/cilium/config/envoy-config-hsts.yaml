@@ -1,0 +1,24 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideEnvoyConfig
+metadata:
+  name: ingress-hsts-config
+spec:
+  description: Enable Strict Transports Security for all Ingress ressources
+  resources:
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: ingress-listener
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                response_headers_to_add:
+                  - header:
+                      key: "Strict-Transport-Security"
+                      value: "max-age=31536000; includeSubDomains; preload"
+                    append: false # Replace any existing header instead of appending
