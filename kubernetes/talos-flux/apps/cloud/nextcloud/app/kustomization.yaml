@@ -7,6 +7,10 @@ resources:
   - helm-release.yaml
   - cm-pre-upgrade.yaml
   - cm-post-upgrade.yaml
+  # restored after the accidental kustomize-controller sync pruned it; keep
+  # it flux-owned so drift detection does not delete it again
+  - cm-db-override.yaml
+  - rbac-database-creator.yaml
 
 configMapGenerator:
   - name: nextcloud-helm-values

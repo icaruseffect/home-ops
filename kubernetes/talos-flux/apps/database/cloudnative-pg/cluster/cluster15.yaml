@@ -7,6 +7,17 @@ metadata:
   namespace: database
 spec:
   instances: 1
+  # node is CPU-oversubscribed; default 1s liveness timeouts cause
+  # shutdown/restart storms on the single instance
+  probes:
+    liveness:
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readiness:
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 6
   imageName: ghcr.io/cloudnative-pg/postgresql:15.3
   primaryUpdateStrategy: unsupervised
   bootstrap:

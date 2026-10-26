@@ -1,0 +1,99 @@
+---
+# One-shot occ upgrade. The interactive/exec path keeps getting killed
+# mid-"Updating database schema"; a standalone Job pod runs it to completion.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nextcloud-occ-upgrade
+  namespace: cloud
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 33
+      serviceAccountName: nextcloud-serviceaccount
+      containers:
+        - name: occ-upgrade
+          image: nextcloud:35.0.2-apache
+          securityContext:
+            runAsUser: 33
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              # postgres17 flaps while its node is CPU-starved; wait for it
+              echo "[INFO] Waiting for postgres17-rw..."
+              for i in $(seq 1 120); do
+                if (echo > /dev/tcp/postgres17-rw.database.svc.cluster.local/5432) 2>/dev/null; then
+                  echo "[INFO] Postgres ready after ${i} tries"; break
+                fi
+                sleep 5
+              done
+              (echo > /dev/tcp/postgres17-rw.database.svc.cluster.local/5432) || { echo "[ERROR] Postgres never became reachable"; exit 1; }
+
+              cd /var/www/html
+              php occ maintenance:mode --off || true
+              php occ upgrade --no-interaction
+              php occ maintenance:mode --off
+              php occ status
+          env:
+            - name: POSTGRES_HOST
+              value: postgres17-rw.database.svc.cluster.local:5432
+            - name: POSTGRES_DB
+              value: nextcloud
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  key: db-username
+                  name: psql-nextcloud
+            - name: NEXTCLOUD_DATA_DIR
+              value: /var/www/html/data
+            - name: REDIS_HOST
+              value: dragonfly.database
+            - name: REDIS_HOST_PORT
+              value: "6379"
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 6Gi
+          volumeMounts:
+            - mountPath: /var/www/
+              name: nextcloud-main
+              subPath: root
+            - mountPath: /var/www/html
+              name: nextcloud-main
+              subPath: html
+            - mountPath: /var/www/html/data
+              name: nextcloud-data
+              subPath: data
+            - mountPath: /var/www/html/config
+              name: nextcloud-main
+              subPath: config
+            - mountPath: /var/www/html/custom_apps
+              name: nextcloud-main
+              subPath: custom_apps
+            - mountPath: /var/www/tmp
+              name: nextcloud-main
+              subPath: tmp
+            - mountPath: /var/www/html/themes
+              name: nextcloud-main
+              subPath: themes
+      volumes:
+        - name: nextcloud-main
+          persistentVolumeClaim:
+            claimName: nextcloud-nextcloud
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-nextcloud-data

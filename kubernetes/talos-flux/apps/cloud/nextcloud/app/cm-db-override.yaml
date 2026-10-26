@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-db-override
+  namespace: cloud
+data:
+  # merged after config.php; pins the app to postgres17 with the
+  # psql-nextcloud password taken from the pod env, so the (incomplete)
+  # velero-restored config.php cannot flip the app back to postgres15
+  zz-db.config.php: |
+    <?php
+    $CONFIG = [
+        'dbhost' => 'postgres17-rw.database.svc.cluster.local:5432',
+        'dbpassword' => getenv('POSTGRES_PASSWORD') ?: '',
+    ];

@@ -7,6 +7,17 @@ metadata:
   namespace: database
 spec:
   enableSuperuserAccess: true
+  # node is CPU-oversubscribed; default 1s liveness timeouts caused a
+  # shutdown/restart storm on the single instance
+  probes:
+    liveness:
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readiness:
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 6
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:17
   primaryUpdateStrategy: unsupervised
