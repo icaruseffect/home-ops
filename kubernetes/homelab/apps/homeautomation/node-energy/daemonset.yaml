@@ -1,0 +1,82 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-energy
+spec:
+  selector:
+    matchLabels:
+      app: node-energy
+  template:
+    metadata:
+      labels:
+        app: node-energy
+    spec:
+      containers:
+        - name: node-energy
+          image: eclipse-mosquitto:2.1.2-alpine
+          command: ["/bin/sh", "/scripts/publish.sh"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: MQTT_HOST
+              value: mqtt.lan
+            - name: MQTT_PORT
+              value: "8883"
+            - name: INTERVAL
+              value: "30"
+            # Constant watts added to the RAPL reading for what it cannot see
+            # (display, SSD, fans, NIC, PSU losses). Calibrate with a metering plug.
+            - name: BASELINE_W
+              value: "0"
+            - name: MQTT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: node-energy-mqtt
+                  key: username
+            - name: MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: node-energy-mqtt
+                  key: password
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            # RAPL energy_uj is root-readable only; no extra capabilities needed.
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            # /sys/class/* entries are relative symlinks into /sys/devices, so the
+            # whole tree is mounted (read-only) rather than one subdirectory.
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: ca
+              mountPath: /ca
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: node-energy-script
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: ca
+          configMap:
+            name: home-ca.lan
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
