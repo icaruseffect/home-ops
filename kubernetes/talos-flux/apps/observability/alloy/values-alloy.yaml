@@ -13,9 +13,26 @@ alloy:
       cpu: 100m
       memory: 256Mi
     limits:
-      memory: 512Mi
+      # 512Mi sat at 99.96% of memory.max with workingset_refault_file
+      # climbing (~320/s over 10s, live 2026-10-28) — the same
+      # limit-bound refault mechanism that crash-looped kube-apiserver
+      # on homelab 2026-09-29. 768Mi keeps ~45% headroom over the
+      # measured ~530MB working set.
+      memory: 768Mi
 
+  # Backs prometheus.remote_write WAL and loki tail positions.
   storagePath: /tmp/alloy
+
+  mounts:
+    # storagePath on the container's writable overlay is disk-backed on
+    # contabo-de-1 (verified live: overlay 599G, 71% used) — a stuck
+    # write-retry loop reading its own WAL back starves whatever shares
+    # that disk (see the homelab 2026-09-29 incident). tmpfs keeps that
+    # I/O off disk; sizeLimit bounds it so a runaway WAL OOM-kills the
+    # pod instead of filling memory.
+    extra:
+      - name: alloy-storage
+        mountPath: /tmp/alloy
 
 # The default 30s reload timeout is shorter than a full config evaluation on
 # this node (27-83s per component under load), so the reloader retried every
@@ -29,7 +46,16 @@ configReloader:
 
 controller:
   type: deployment
-  replicas: 1
+  # Alloy intentionally not running on the talos cluster (user decision
+  # 2026-10-28): keep the Deployment scaled to 0. To run it, scale
+  # manually or bump this value.
+  replicas: 0
+  volumes:
+    extra:
+      - name: alloy-storage
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Mi
 
 rbac:
   create: true
