@@ -1,19 +1,6 @@
 {
   enabled: true,
-  extends: [
-    "config:best-practices",
-    "github>icaruseffect/renovate-config//dashboard/default.json5",
-    "github>icaruseffect/renovate-config//flux-infra.json5",
-    "github>icaruseffect/renovate-config//flux/prevent-automerge-flux.json5",
-    "github>icaruseffect/renovate-config//labels/semantic.json5",
-    "github>icaruseffect/renovate-config//helm/groups/rook-ceph.json5",
-    "github>icaruseffect/renovate-config//helm/groups/gha-runner-scale-set.json5",
-    "github>icaruseffect/renovate-config//flux/groups/flux.json5",
-    "github>icaruseffect/renovate-config//generic-regex-manager.json5",
-    "github>icaruseffect/renovate-config//docker/prevent-automerge-talos.json5",
-    "github>icaruseffect/renovate-config//nix/default.json5",
-    "security:openssf-scorecard",
-  ],
+  extends: ["config:best-practices", ":semanticCommits"],
   ignorePaths: [
     "archive/**",
     "kubernetes/talos-flux/apps/home-automation/esphome/app/config/**",
@@ -22,7 +9,21 @@
   semanticCommits: "enabled",
   suppressNotifications: ["prIgnoreNotification"],
   rebaseWhen: "conflicted",
-  customManagers: [],
+  flux: {
+    enabled: true,
+  },
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Update HelmRepository URLs",
+      fileMatch: ["^kubernetes/.+\\.ya?ml$"],
+      matchStrings: [
+        "apiVersion: source\\.toolkit\\.fluxcd\\.io\\/v1.*?kind: HelmRepository.*?name: (?<depName>.+?)\\s.*?url: (?<registryUrl>https?:\\/\\/.+)",
+      ],
+      datasourceTemplate: "helm",
+      versioningTemplate: "semver",
+    },
+  ],
   packageRules: [
     {
       description: "prevent pinDigest for managers that don't use digests",
@@ -40,10 +41,71 @@
       pinDigests: false,
     },
     {
-      matchPackageNames: ["icaruseffect/bedrock-tags"],
-      matchUpdateTypes: ["major", "minor", "patch"],
-      semanticCommitScope: "minecraft",
-      commitMessageTopic: "bedrock",
+      description: "Group flux system components",
+      groupName: "flux-system",
+      matchDatasources: ["docker", "github-releases"],
+      matchPackageNames: [
+        "fluxcd/flux2",
+        "ghcr.io/fluxcd/helm-controller",
+        "ghcr.io/fluxcd/kustomize-controller",
+        "ghcr.io/fluxcd/notification-controller",
+        "ghcr.io/fluxcd/source-controller",
+      ],
+    },
+    {
+      description: "Auto-merge flux patch updates",
+      matchPackageNames: [
+        "fluxcd/flux2",
+        "ghcr.io/fluxcd/helm-controller",
+        "ghcr.io/fluxcd/kustomize-controller",
+        "ghcr.io/fluxcd/notification-controller",
+        "ghcr.io/fluxcd/source-controller",
+      ],
+      matchUpdateTypes: ["patch"],
+      automerge: false,
+    },
+    {
+      description: "Group Rook Ceph components",
+      groupName: "rook-ceph",
+      matchDatasources: ["helm"],
+      matchPackageNames: ["rook-ceph", "rook-ceph-cluster"],
+    },
+    {
+      description: "Group GHA Runner Scale Set components",
+      groupName: "gha-runner-scale-set",
+      matchDatasources: ["helm"],
+      matchPackageNames: [
+        "gha-runner-scale-set",
+        "gha-runner-scale-set-controller",
+      ],
+    },
+    {
+      description: "Use feat for major/minor updates",
+      matchUpdateTypes: ["major", "minor"],
+      semanticCommitType: "feat",
+    },
+    {
+      description: "Use fix for patch updates",
+      matchUpdateTypes: ["patch"],
+      semanticCommitType: "fix",
+    },
+    {
+      description: "Use ci for GitHub Actions",
+      matchManagers: ["github-actions"],
+      semanticCommitType: "ci",
+      semanticCommitScope: "actions",
+    },
+    {
+      description: "Use build for Docker images",
+      matchDatasources: ["docker"],
+      semanticCommitType: "build",
+      semanticCommitScope: "docker",
+    },
+    {
+      description: "Use build for Helm charts",
+      matchDatasources: ["helm"],
+      semanticCommitType: "build",
+      semanticCommitScope: "helm",
     },
     {
       matchPackageNames: ["icaruseffect/bedrock-tags"],
@@ -74,6 +136,50 @@
       separateMinorPatch: true,
       matchPackageNames: ["/dragonfly(?:db)?.operator/"],
     },
+    {
+      description: "Group Flux HelmRelease updates by chart",
+      matchManagers: ["flux"],
+      matchFileNames: ["**/helmrelease.yaml", "**/helm-release.yaml"],
+      groupName: "helm-{{depName}}",
+      separateMinorPatch: true,
+    },
+    {
+      description: "Group HelmRepository updates",
+      groupName: "flux-helm-repositories",
+      matchManagers: ["regex"],
+      matchFileNames: ["**/repositories/helm/*.yaml"],
+      separateMinorPatch: false,
+    },
+    {
+      description: "Auto-merge patch updates for Flux HelmReleases",
+      matchManagers: ["flux"],
+      matchFileNames: ["**/helmrelease.yaml", "**/helm-release.yaml"],
+      matchUpdateTypes: ["patch"],
+      automerge: false,
+    },
+    {
+      description: "Use semantic commits for Flux HelmReleases",
+      matchManagers: ["flux"],
+      matchFileNames: ["**/helmrelease.yaml", "**/helm-release.yaml"],
+      semanticCommitType: "feat",
+      semanticCommitScope: "helm",
+      commitMessageTopic: "{{depName}} chart",
+    },
+    {
+      description: "Use semantic commits for HelmRepositories",
+      matchManagers: ["regex"],
+      matchFileNames: ["**/repositories/helm/*.yaml"],
+      semanticCommitType: "chore",
+      semanticCommitScope: "flux",
+      commitMessageTopic: "helm repository",
+    },
+    {
+      description: "Schedule Flux updates for off-peak hours",
+      matchManagers: ["flux"],
+      matchFileNames: ["**/helmrelease.yaml", "**/helm-release.yaml"],
+      schedule: ["before 6am on monday"],
+      timezone: "Europe/Berlin",
+    },
   ],
   ansible: {
     enabled: false,
@@ -86,6 +192,6 @@
     enabled: true,
   },
   vulnerabilityAlerts: {
-    enabled: false,
+    enabled: true,
   },
 }
