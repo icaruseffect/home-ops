@@ -27,3 +27,32 @@ spec:
     - kind: ConfigMap
       name: greptimedb-values
       valuesKey: values-greptimedb.yaml
+  # Chart 0.4.16+ hardcodes the Service http port to targetPort http-api
+  # (containerPort 4006, never bound). Point it at the bound http port (4000).
+  # Remove when the chart renders targetPort: http again.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              version: v1
+              kind: Service
+              name: greptimedb-standalone
+            patch: |
+              spec:
+                ports:
+                - name: http
+                  port: 4000
+                  targetPort: http
+                  protocol: TCP
+                - name: grpc
+                  port: 4001
+                  targetPort: grpc
+                  protocol: TCP
+                - name: mysql
+                  port: 4002
+                  targetPort: mysql
+                  protocol: TCP
+                - name: postgres
+                  port: 4003
+                  targetPort: postgres
+                  protocol: TCP
