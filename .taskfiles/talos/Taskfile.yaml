@@ -29,22 +29,18 @@ tasks:
     cmds:
       - |
         set -e
-        sops -d controlplane.sops.yaml > controlplane.yaml.tmp
-        mv controlplane.yaml.tmp controlplane.yaml
-      - |
-        set -e
-        sops -d worker.sops.yaml > worker.yaml.tmp
-        mv worker.yaml.tmp worker.yaml
-      - |
-        set -e
-        sops -d patches/wireguard-secret.sops.yaml > patches/wireguard-secret.yaml.tmp
-        mv patches/wireguard-secret.yaml.tmp patches/wireguard-secret.yaml
+        for f in controlplane.sops.yaml worker.sops.yaml patches/*.sops.yaml; do
+          plain="${f%.sops.yaml}.yaml"
+          sops -d "$f" > "$plain.tmp"
+          mv "$plain.tmp" "$plain"
+        done
     preconditions:
       - sh: which sops >/dev/null 2>&1
         msg: sops not found in PATH
       - test -f controlplane.sops.yaml
       - test -f worker.sops.yaml
-      - test -f patches/wireguard-secret.sops.yaml
+      - sh: ls patches/*.sops.yaml >/dev/null 2>&1
+        msg: no encrypted patches found
 
   secrets:encrypt:
     desc: Re-encrypt plaintext machineconfig secrets back to .sops.yaml (after manual edits)
@@ -52,22 +48,33 @@ tasks:
     cmds:
       - |
         set -e
-        sops -e --filename-override controlplane.sops.yaml controlplane.yaml > controlplane.sops.yaml.tmp
-        mv controlplane.sops.yaml.tmp controlplane.sops.yaml
-      - |
-        set -e
-        sops -e --filename-override worker.sops.yaml worker.yaml > worker.sops.yaml.tmp
-        mv worker.sops.yaml.tmp worker.sops.yaml
-      - |
-        set -e
-        sops -e --filename-override patches/wireguard-secret.sops.yaml patches/wireguard-secret.yaml > patches/wireguard-secret.sops.yaml.tmp
-        mv patches/wireguard-secret.sops.yaml.tmp patches/wireguard-secret.sops.yaml
+        for f in controlplane.sops.yaml worker.sops.yaml patches/*.sops.yaml; do
+          plain="${f%.sops.yaml}.yaml"
+          test -f "$plain" || { echo "missing plaintext: $plain"; exit 1; }
+          sops -e --filename-override "$f" "$plain" > "$f.tmp"
+          mv "$f.tmp" "$f"
+        done
 
   secrets:clean:
-    desc: Delete all plaintext talos machineconfig secrets after use
+    desc: Enforce sops-only talos-flux secrets on disk (plaintext artifacts removed)
     dir: infra/talos/contabo
+    preconditions:
+      - sh: test -f controlplane.sops.yaml && test -f worker.sops.yaml && test -f patches/wireguard-secret.sops.yaml
+        msg: encrypted machineconfigs missing
     cmds:
-      - rm -f controlplane.yaml worker.yaml patches/wireguard-secret.yaml machineconfig_patched.yaml
+      - cmd: |
+          set -e
+          for f in controlplane.sops.yaml worker.sops.yaml patches/*.sops.yaml; do
+            base="${f%.sops.yaml}"
+            sops filestatus "$f" | grep -q '"encrypted":true' || { echo "NOT ENCRYPTED: $f"; exit 1; }
+            if test -f "$base.yaml"; then
+              sops -d "$f" | diff -q - "$base.yaml" >/dev/null || { echo "PLAINTEXT DRIFT: $base.yaml not archived — run secrets:encrypt first"; exit 1; }
+            fi
+          done
+          rm -f controlplane.yaml worker.yaml \
+                machineconfig_patched.yaml machineconfig_live*.yaml machineconfig_tmp \
+                admin.crt admin.csr admin.key ca.crt ca.key kubeconfig talosconfig*
+          find patches -maxdepth 1 -type f -name '*.yaml' ! -name '*.sops.yaml' -delete
 
   patch:copy-mc:
     dir: infra/talos/contabo
@@ -93,7 +100,7 @@ tasks:
       - for: sources
         cmd: talosctl mc patch machineconfig_patched.yaml --patch @{{.ITEM}} > /tmp/machineconfig_tmp && cp /tmp/machineconfig_tmp machineconfig_patched.yaml
       - cmd: rm /tmp/machineconfig_tmp
-      - cmd: rm -f controlplane.yaml worker.yaml patches/wireguard-secret.yaml
+      - cmd: rm -f controlplane.yaml worker.yaml && find patches -maxdepth 1 -type f -name '*.yaml' ! -name '*.sops.yaml' -delete
     preconditions:
       # if template and patched file are the same after copying the template run the patches
       - sh: "[[ $(sha256sum machineconfig_patched.yaml | awk '{ print $1 }') = $(sha256sum controlplane.yaml | awk '{ print $1 }' ) ]]"
@@ -253,3 +260,103 @@ tasks:
       - test -f {{.TALOS_DIR}}/talconfig.yaml
       - talosctl --context {{.cluster}} config info >/dev/null 2>&1
       - talosctl --context {{.cluster}} --nodes {{.ip}} get machineconfig >/dev/null 2>&1
+
+  # ============================================================================
+  # Certificate Renewal Tasks
+  # ============================================================================
+
+  renew:talosconfig:
+    desc: Renew talos client certificate using CA from machineconfig
+    dir: infra/talos/contabo
+    prompt: This will regenerate your talosconfig with a new client certificate. Continue?
+    cmds:
+      - |
+        set -e
+        echo "Creating backup of current talosconfig..."
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        cp talosconfig talosconfig.backup.${TIMESTAMP}
+        echo "Backup created: talosconfig.backup.${TIMESTAMP}"
+      - |
+        set -e
+        echo "Extracting CA certificates from machineconfig..."
+        # Create secure temp directory
+        TMPDIR=$(mktemp -d)
+        chmod 700 "$TMPDIR"
+        # Ensure cleanup on exit (even on failure)
+        trap 'rm -rf "$TMPDIR"' EXIT
+
+        # Extract CA credentials with secure permissions
+        yq '.machine.ca.key' machineconfig_patched.yaml | base64 -d > "$TMPDIR/ca.key"
+        yq '.machine.ca.crt' machineconfig_patched.yaml | base64 -d > "$TMPDIR/ca.crt"
+        chmod 600 "$TMPDIR/ca.key"
+        echo "CA certificates extracted successfully"
+
+        echo "Generating new talosconfig with fresh client certificate..."
+        ENDPOINT=$(yq '.cluster.controlPlane.endpoint' machineconfig_patched.yaml | sed -e 's|https://||' -e 's|:[0-9]*$||')
+        talosctl config new \
+          --ca-crt "$TMPDIR/ca.crt" \
+          --ca-key "$TMPDIR/ca.key" \
+          --roles os:admin \
+          --context "$ENDPOINT" \
+          --endpoints "$ENDPOINT" \
+          talosconfig
+        echo "New talosconfig generated successfully"
+      - |
+        set -e
+        echo "Verifying talosctl connection..."
+        ENDPOINT=$(yq '.cluster.controlPlane.endpoint' machineconfig_patched.yaml | sed -e 's|https://||' -e 's|:[0-9]*$||')
+        talosctl version --nodes "$ENDPOINT"
+        echo "Talos certificate renewed and verified successfully"
+      - task: secrets:clean
+    preconditions:
+      - test -f talosconfig
+      - test -f machineconfig_patched.yaml
+      - sh: "yq '.machine.ca.key' machineconfig_patched.yaml | base64 -d >/dev/null 2>&1"
+        msg: "machineconfig_patched.yaml contains invalid CA key"
+      - sh: "which talosctl >/dev/null 2>&1"
+        msg: "talosctl not found in PATH"
+      - sh: "which yq >/dev/null 2>&1"
+        msg: "yq not found in PATH"
+
+  renew:kubeconfig:
+    desc: Renew kubectl configuration by regenerating from talos
+    dir: infra/talos/contabo
+    prompt: This will regenerate your kubeconfig. Continue?
+    cmds:
+      - |
+        set -e
+        if test -f ~/.kube/config; then
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          cp ~/.kube/config ~/.kube/config.backup.${TIMESTAMP}
+          echo "Backup created: ~/.kube/config.backup.${TIMESTAMP}"
+        else
+          echo "No existing ~/.kube/config to backup"
+        fi
+      - |
+        set -e
+        echo "Generating new kubeconfig..."
+        talosctl kubeconfig --talosconfig=talosconfig --force
+        echo "Kubeconfig generated successfully"
+      - |
+        set -e
+        echo "Verifying kubectl connection..."
+        kubectl version --output=json | jq -r '.serverVersion.gitVersion'
+        echo "Kubeconfig renewed and verified successfully"
+    preconditions:
+      - test -f talosconfig
+      - sh: "which talosctl >/dev/null 2>&1"
+        msg: "talosctl not found in PATH"
+      - sh: "which kubectl >/dev/null 2>&1"
+        msg: "kubectl not found in PATH"
+      - sh: "which jq >/dev/null 2>&1"
+        msg: "jq not found in PATH"
+
+  renew:all:
+    desc: Renew both talosconfig and kubeconfig certificates
+    cmds:
+      - task: renew:talosconfig
+      - task: renew:kubeconfig
+      - |
+        echo "=========================================="
+        echo "All certificates renewed successfully!"
+        echo "=========================================="
