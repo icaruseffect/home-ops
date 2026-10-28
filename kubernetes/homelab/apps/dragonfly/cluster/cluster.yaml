@@ -1,0 +1,45 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/dragonflydb.io/dragonfly_v1alpha1.json
+apiVersion: dragonflydb.io/v1alpha1
+kind: Dragonfly
+metadata:
+  name: dragonfly
+  namespace: dragonfly
+spec:
+  image: ghcr.io/dragonflydb/dragonfly:v2.0.0@sha256:ba22a11c729cc90e50fbaf527d800defbd2048d4f3a9ef8dfe05c0806cd1e078
+  # single-node cluster - matches talos-flux's reasoning
+  replicas: 1
+  env:
+    - name: MAX_MEMORY
+      valueFrom:
+        resourceFieldRef:
+          resource: limits.memory
+          divisor: 1Mi
+  args:
+    - --maxmemory=$(MAX_MEMORY)Mi
+    # deliberately NOT --cache_mode=true here, unlike talos-flux: this
+    # instance shares Harbor's cache-like data with Paperless-ngx's Celery
+    # broker. cache_mode evicts keyspace-wide under memory pressure, and
+    # silently dropping a queued-but-unprocessed Celery task is a real
+    # correctness bug (unlike evicting a stale HTTP cache entry). Default
+    # noeviction is correct here: writes fail loudly under pressure instead
+    # of a task vanishing. maxmemory has generous headroom over actual
+    # combined usage (a few MB today), so this isn't expected to bite.
+    #
+    # Dragonfly reserves ~256MiB per proactor thread (confirmed on
+    # talos-flux: 4 threads refused to start against a 512Mi cap) - stay at
+    # 2 threads to match the 512Mi limit below.
+    - --proactor_threads=2
+    - --cluster_mode=emulated
+    - --lock_on_hashtags
+  resources:
+    requests:
+      cpu: 100m
+    limits:
+      # talos-flux found even 1000m throttling 2 proactor threads under
+      # burst (cgroup cpu.stat nr_throttled), needed 2000m there. homelab
+      # has less total CPU (4 vCPU vs 6) and is already busier on requests
+      # (73%), so sized down from that but still well above the request -
+      # real burst room without matching the other cluster's number blindly.
+      cpu: 1500m
+      memory: 512Mi

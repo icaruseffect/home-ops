@@ -1,0 +1,35 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: plugin-barman-cloud
+  namespace: cnpg-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: plugin-barman-cloud
+      reconcileStrategy: ChartVersion
+      sourceRef:
+        kind: HelmRepository
+        name: cloudnative-pg-charts
+        namespace: flux-system
+      version: 0.x
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+      strategy: rollback
+  dependsOn:
+    - name: cloudnative-pg
+      namespace: cnpg-system
+  values:
+    crds:
+      enabled: true
+      keep: true
+    # cert-manager assumed already installed cluster-wide
+    cert-manager:
+      enabled: false

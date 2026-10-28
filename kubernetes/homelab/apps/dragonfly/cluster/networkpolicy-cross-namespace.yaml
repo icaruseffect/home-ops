@@ -1,0 +1,33 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/networking.k8s.io/networkpolicy_v1.json
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dragonfly-cross-namespace-clients
+  namespace: dragonfly
+spec:
+  # dragonfly-operator v1.6.1's default Dragonfly.spec.networkPolicyEnabled
+  # creates its own NetworkPolicy restricting port 6379 to same-namespace
+  # pods only (correct for the admin port 9999, wrong for the main port when
+  # actual clients live in other namespaces - discovered reactively on
+  # talos-flux, applied proactively here). NetworkPolicies are additive, so
+  # this just adds the access harbor/paperless need without touching the
+  # operator-managed one.
+  podSelector:
+    matchLabels:
+      app: dragonfly
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/part-of: dragonfly
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: harbor
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: paperless
+      ports:
+        - port: 6379
+          protocol: TCP

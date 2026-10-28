@@ -1,0 +1,69 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/upgrade.cattle.io/plan_v1.json
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: archlinux-kernel-reboot
+  namespace: system-upgrade
+spec:
+  concurrency: 1
+  # Not a real Kubernetes version -- this Plan just needs *a* value that
+  # changes to make the controller re-run it. The archlinux-kernel-reboot-
+  # trigger CronJob bumps this to "weekly-YYYYMMDD" on its schedule; the
+  # value here is only what's applied on first apply / manual runs.
+  version: weekly-init
+  serviceAccountName: system-upgrade
+  # See plans/archlinux.yaml for why there's no drain here: single-node
+  # cluster (nowhere to evict to) plus CNPG PodDisruptionBudgets that block
+  # eviction outright -- drain: force:true hangs forever retrying.
+  cordon: true
+  upgrade:
+    image: docker.io/archlinux:latest
+    # See plans/archlinux.yaml for why nsenter is needed (acts on the real
+    # host, not the ephemeral archlinux:latest container's own rootfs).
+    command: ["nsenter", "--mount=/proc/1/ns/mnt", "--"]
+    args:
+      - sh
+      - -c
+      - |
+        set -ex
+
+        pacman -Sy --noconfirm
+
+        if ! pacman -Qu linux >/dev/null 2>&1; then
+          echo "No kernel update available; nothing to do"
+          exit 0
+        fi
+
+        echo "Kernel update available; upgrading"
+        RUNNING_KERNEL="$(uname -r)"
+
+        # Exclude the pinned Kubernetes packages -- those are only ever
+        # meant to move in lockstep with plans/archlinux.yaml's "kubeadm
+        # upgrade apply" step. Letting a general -Syu drag them forward
+        # here would leave the packages ahead of the running control
+        # plane again (the exact bug that made the k8s upgrade Plan
+        # necessary in the first place).
+        pacman -Su --noconfirm --ignore \
+        kubeadm,kubelet,kubectl,kube-apiserver,kube-controller-manager,kube-scheduler,kube-proxy,kubernetes-control-plane-common
+
+        if [ -d "/usr/lib/modules/$RUNNING_KERNEL" ]; then
+          echo "linux package updated but running kernel ($RUNNING_KERNEL) module dir still present; not rebooting"
+          exit 0
+        fi
+
+        echo "Kernel changed (booted $RUNNING_KERNEL no longer present); rebooting in 10s"
+        # Detach the reboot so this job can exit 0 and report success
+        # before the node actually goes down.
+        setsid sh -c 'sleep 10 && systemctl reboot' </dev/null >/dev/null 2>&1 &
+        exit 0
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/os: linux
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

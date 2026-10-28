@@ -1,0 +1,21 @@
+---
+apiVersion: trust-manager.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: home-intermediate-ca
+  namespace: cert-manager
+  annotations:
+    cert-manager.io/cluster-issuer: ca-issuer
+  labels:
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/component: trust-bundle
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  sources:
+    - configMap:
+        name: home-intermediate-ca
+        namespace: homeautomation
+  target:
+    namespace: homeautomation
+    kind: ConfigMap
+    name: home-intermediate-ca

@@ -1,0 +1,53 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8s-preupgrade-check
+  namespace: system-upgrade
+spec:
+  template:
+    spec:
+      hostPID: true
+      serviceAccountName: system-upgrade
+      containers:
+        - name: version-check
+          image: docker.io/archlinux:latest
+          securityContext:
+            privileged: true
+          command: ["nsenter", "--mount=/proc/1/ns/mnt", "--"]
+          args:
+            - sh
+            - -c
+            - |
+              set -ex
+
+              # Target version is read from the Plan itself, so this check
+              # always reflects whatever version.yaml currently declares --
+              # bump that file first, then run this Job to sanity-check it
+              # before letting the Plan actually act on it.
+              TARGET_VERSION="$(kubectl --kubeconfig=/etc/kubernetes/admin.conf get plan archlinux-k8s-upgrade -n system-upgrade -o jsonpath='{.spec.version}')"
+              if [ -z "$TARGET_VERSION" ]; then
+                echo "Could not read target version from Plan archlinux-k8s-upgrade"
+                exit 1
+              fi
+              echo "Target version from Plan: $TARGET_VERSION"
+
+              if ! kubeadm version -o short | grep -qF "$TARGET_VERSION"; then
+                echo "kubeadm is not yet at $TARGET_VERSION (pacman -Sy kubeadm may need to run first)"
+              fi
+
+              TARGET_PKG_VERSION="${TARGET_VERSION#v}"
+              pacman -Sy --noconfirm
+              if ! pacman -Ss "^kubeadm $TARGET_PKG_VERSION" >/dev/null; then
+                echo "Target version $TARGET_PKG_VERSION not found in repositories yet"
+                exit 1
+              fi
+
+              if ! kubeadm upgrade plan --ignore-preflight-errors=CreateJob; then
+                echo "Upgrade plan check failed"
+                exit 1
+              fi
+
+              echo "$TARGET_VERSION is available and kubeadm reports a valid upgrade plan"
+      restartPolicy: Never
+  backoffLimit: 0

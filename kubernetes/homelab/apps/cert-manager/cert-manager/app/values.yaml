@@ -1,0 +1,115 @@
+---
+affinity: {}
+approveSignerNames:
+  - issuers.cert-manager.io/*
+  - clusterissuers.cert-manager.io/*
+clusterResourceNamespace: ""
+config:
+  apiVersion: controller.config.cert-manager.io/v1alpha1
+  featureGates:
+    ExperimentalGatewayAPISupport: true
+  kind: ControllerConfiguration
+  metricsTLSConfig:
+    dynamic:
+      dnsNames:
+        - cert-manager-metrics
+      secretName: cert-manager-metrics-ca
+      secretNamespace: cert-manager
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+crds:
+  enabled: true
+  keep: true
+disableAutoApproval: false
+dns01RecursiveNameservers: 192.168.8.1:53
+dns01RecursiveNameserversOnly: false
+enableCertificateOwnerRef: false
+enableServiceLinks: false
+# extraArgs:
+# - --feature-gates=ExperimentalGatewayAPISupport=true
+extraEnv: []
+featureGates: ""
+global:
+  commonLabels: {}
+  imagePullSecrets: []
+  leaderElection:
+    namespace: kube-system
+  # logLevel: 2
+  podSecurityPolicy:
+    enabled: false
+    useAppArmor: true
+  priorityClassName: ""
+  rbac:
+    aggregateClusterRoles: true
+    create: true
+hostAliases: []
+image:
+  pullPolicy: IfNotPresent
+  repository: quay.io/jetstack/cert-manager-controller
+ingressShim: {}
+installCRDs: false
+livenessProbe:
+  enabled: false
+  failureThreshold: 8
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  successThreshold: 1
+  timeoutSeconds: 15
+maxConcurrentChallenges: 60
+namespace: cert-manager
+nodeSelector:
+  kubernetes.io/os: linux
+podDisruptionBudget:
+  enabled: false
+podLabels: {}
+prometheus:
+  enabled: true
+  podmonitor:
+    annotations: {}
+    enabled: false
+    endpointAdditionalProperties: {}
+    honorLabels: false
+    interval: 60s
+    labels: {}
+    path: /metrics
+    prometheusInstance: default
+    scrapeTimeout: 30s
+  servicemonitor:
+    annotations: {}
+    enabled: true
+    endpointAdditionalProperties: {}
+    honorLabels: false
+    interval: 60s
+    labels: {}
+    path: /metrics
+    prometheusInstance: default
+    scrapeTimeout: 30s
+    targetPort: 9402
+replicaCount: 1
+resources: {}
+securityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+serviceAccount:
+  automountServiceAccountToken: true
+  create: true
+webhook:
+  config: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  podDisruptionBudget:
+    enabled: false
+  replicaCount: 1
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  strategy: {}
+  timeoutSeconds: 10

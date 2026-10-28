@@ -1,0 +1,71 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dragonflydb/dragonfly-operator/main/charts/dragonfly-operator/values.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: &app dragonfly-operator
+  # homelab has no per-app targetNamespace injection (unlike talos-flux's
+  # flux-sync.yaml pattern) - set explicitly so this is self-contained
+  namespace: dragonfly
+spec:
+  interval: 30m
+  chart:
+    spec:
+      # official chart isn't published to a HelmRepository/OCI index, only
+      # in-tree - see dragonfly-operator-git.yaml
+      chart: ./charts/dragonfly-operator
+      sourceRef:
+        kind: GitRepository
+        name: dragonfly-operator
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  values:
+    replicaCount: 1
+
+    serviceAccount:
+      name: *app
+
+    manager:
+      image:
+        repository: ghcr.io/dragonflydb/operator
+        tag: v1.6.1@sha256:3c40e58614836dfafd116c4b119fe601d080b29a95a8189b41f38a48e106f57f
+      resources:
+        requests:
+          cpu: 10m
+          memory: 100Mi
+        limits:
+          memory: 100Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }
+
+    podSecurityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+      runAsNonRoot: true
+
+    # metrics served in-cluster only via ServiceMonitor, no external access
+    # needed - skip the kube-rbac-proxy sidecar for parity with how every
+    # other app's ServiceMonitor in this repo scrapes plain metrics
+    rbacProxy:
+      enabled: false
+
+    # deferred - not essential to standing this up, and homelab's
+    # prometheus-stack release-label convention wasn't confirmed before this
+    # change; enable later if monitoring is wanted
+    serviceMonitor:
+      enabled: false
+
+    # chart's own grafanaDashboard.enabled doesn't render via a GitRepository
+    # chart source (confirmed on talos-flux); deferred for the same reason
+    # serviceMonitor is
+    grafanaDashboard:
+      enabled: false

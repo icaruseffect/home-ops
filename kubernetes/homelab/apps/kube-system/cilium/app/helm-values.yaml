@@ -1,6 +1,22 @@
 ---
-ipv4:
-  enabled: true
+rollOutCiliumPods: true
+
+# cilium-agent was previously unbounded (BestEffort QoS) on this single,
+# memory-overcommitted node, making it the kernel OOM-killer's first target
+# under any memory pressure - killing it drops the node's CNI and cascades
+# into network blips for every pod on the node. Same fix, same reasoning as
+# talos-flux (kubernetes/talos-flux/apps/kube-system/cilium/app/values.yaml).
+resources:
+  requests:
+    cpu: 100m
+    memory: 448Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+cni:
+  exclusive: false
+
 ipv6:
   enabled: true
 cluster:
@@ -16,10 +32,7 @@ encryption:
   type: wireguard
   wireguard:
     userspaceFallback: true
-hostFirewall:
-  enabled: false
 hubble:
-  enabled: true
   metrics:
     enabled:
       - dns:query;ignoreAAAA
@@ -34,6 +47,15 @@ hubble:
     prometheus:
       serviceMonitor:
         enabled: true
+  tls:
+    enabled: true
+    auto:
+      enabled: true
+      method: certmanager
+      certManagerIssuerRef:
+        group: cert-manager.io
+        kind: ClusterIssuer
+        name: ca-issuer
   ui:
     enabled: true
     ingress:
@@ -68,7 +90,6 @@ ingressController:
         targetPort: 443
     type: LoadBalancer
 ipam:
-  mode: cluster-pool
   operator:
     clusterPoolIPv4PodCIDRList: 10.0.0.0/8
     clusterPoolIPv4MaskSize: 24
@@ -83,7 +104,13 @@ l2NeighDiscovery:
 l2announcements:
   enabled: true
 operator:
-  enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 96Mi
+    limits:
+      cpu: 300m
+      memory: 192Mi
   prometheus:
     serviceMonitor:
       enabled: true
@@ -91,3 +118,15 @@ operator:
         release: prometheus-stack
   replicas: 1
   rollOutPods: true
+
+# envoy is deployed by default in this chart version (cilium-envoy DaemonSet
+# already live) even without this key present - adding only the same
+# unbounded-QoS fix, not changing its enablement.
+envoy:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

@@ -1,0 +1,45 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-root-ca
+  namespace: cert-manager
+data:
+  # Self-signed Home Root CA that issued the homeca Intermediate CA (the
+  # signing cert in the ca-key-pair secret used by the ca-issuer
+  # ClusterIssuer). ca-key-pair only carries the intermediate, so without
+  # this the home-ca.lan trust bundle can't build a full chain and TLS
+  # clients see "unable to get issuer certificate" against mosquitto and
+  # other ca-issuer-signed services.
+  root-ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    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
+    -----END CERTIFICATE-----

@@ -1,0 +1,11 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# no top-level namespace: transformer - it would force the GitRepository
+# (needs to stay in flux-system) into this namespace too. helm-release.yaml
+# carries its own metadata.namespace instead, same as talos-flux's pattern.
+resources:
+  - namespace.yaml
+  - dragonfly-operator-git.yaml
+  - helm-release.yaml

@@ -1,0 +1,44 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: metrics-server
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: metrics-server
+      version: 3.13.x
+      sourceRef:
+        kind: HelmRepository
+        name: metrics-server-charts
+        namespace: flux-system
+      interval: 30m
+  values:
+    args:
+      - --kubelet-insecure-tls
+    metrics:
+      enabled: true
+    serviceMonitor:
+      # TODO: enable me after mini prom setup
+      enabled: false
+    apiService:
+      insecureSkipTLSVerify: true
+    tls:
+      # type: "metrics-server"
+      type: "cert-manager"
+      certManager:
+        # Automatically add the cert-manager.io/inject-ca-from annotation to the APIService resource.
+        # See https://cert-manager.io/docs/concepts/ca-injector
+        addInjectorAnnotations: true
+        existingIssuer:
+          # Use an existing cert-manager issuer
+          enabled: true
+          # Kind of the existing cert-manager issuer
+          kind: "ClusterIssuer"
+          # Name of the existing cert-manager issuer
+          name: "ca-issuer"
+          annotations:
+            cert-manager.io/private-key-algorithm: ECDSA                                                                                │
+            cert-manager.io/private-key-size: 256

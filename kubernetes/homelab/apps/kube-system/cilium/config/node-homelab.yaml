@@ -1,0 +1,11 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNodeConfig
+metadata:
+  name: node-homelab
+spec:
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/hostname: "homelab"
+  defaults:
+    devices: enp0s25

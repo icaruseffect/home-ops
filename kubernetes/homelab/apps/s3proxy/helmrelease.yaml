@@ -1,0 +1,73 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: rclone-s3-proxy
+  namespace: s3proxy
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: app-template
+      reconcileStrategy: ChartVersion
+      version: ">=4.0.0 <5.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s-charts
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    controllers:
+      rclone-s3-proxy:
+        type: deployment
+        replicas: 1
+        containers:
+          main:
+            image:
+              repository: rclone/rclone
+              tag: "1.75"
+            command:
+              - rclone
+            args:
+              - serve
+              - s3
+              - >-
+                contabo-crypt:
+              - --addr=:8080
+              - --config=/config/rclone.conf
+              - --no-modtime
+              - --dir-cache-time=5s
+              - --poll-interval=0
+            env:
+              RCLONE_AUTH_KEY:
+                valueFrom:
+                  secretKeyRef:
+                    name: rclone-s3-proxy-auth
+                    key: auth-key
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                memory: 512Mi
+
+    service:
+      main:
+        controller: rclone-s3-proxy
+        ports:
+          http:
+            port: 8080
+
+    persistence:
+      config:
+        type: secret
+        name: rclone-s3-proxy-config
+        globalMounts:
+          - path: /config/rclone.conf
+            subPath: rclone.conf
+            readOnly: true

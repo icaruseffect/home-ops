@@ -1,0 +1,38 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: reflector
+  namespace: kube-system
+spec:
+  chart:
+    spec:
+      chart: reflector
+      interval: 30m
+      reconcileStrategy: ChartVersion
+      sourceRef:
+        kind: HelmRepository
+        name: emberstack-charts
+        namespace: flux-system
+      version: 9.x.x
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 5
+  interval: 30m
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 5
+  # was unbounded (BestEffort) - same class of fix as cilium
+  # (kubernetes/homelab/apps/kube-system/cilium/app/helm-values.yaml): give
+  # it real headroom over its observed steady state (~150-200Mi RSS) rather
+  # than leave it uncapped on this memory-overcommitted node.
+  values:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 160Mi
+      limits:
+        cpu: 250m
+        memory: 320Mi

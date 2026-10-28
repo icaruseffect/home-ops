@@ -1,0 +1,106 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/upgrade.cattle.io/plan_v1.json
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: archlinux-k8s-upgrade
+  namespace: system-upgrade
+spec:
+  concurrency: 1
+  # Bump this to the target Kubernetes version (must match the "vX.Y.Z" format
+  # kubelet reports, i.e. `kubectl get nodes`), then `kubectl apply -f` this
+  # file. There is no automatic version tracking for this Arch Linux node --
+  # check what's available first with the archlinux-k8s-preupgrade-check Job
+  # in this directory before bumping.
+  version: v1.36.4
+  serviceAccountName: system-upgrade
+  # No drain: this is a single-node cluster, so there's nowhere to evict
+  # workloads to, and single-instance CNPG PostgreSQL clusters run their own
+  # PodDisruptionBudgets that block any eviction anyway (minAvailable can
+  # never be satisfied with the only replica gone) -- drain: force:true just
+  # hangs forever retrying. Cordon still prevents new pods scheduling here
+  # mid-upgrade; kubelet/kubeadm handle the actual container disruption.
+  cordon: true
+  upgrade:
+    image: docker.io/archlinux:latest
+    # system-upgrade-controller runs this job with hostPID; nsenter into the
+    # host's mount namespace so pacman/kubeadm/systemctl/kubectl act on the
+    # real host, not the ephemeral archlinux:latest container's rootfs.
+    # Requires SYSTEM_UPGRADE_JOB_PRIVILEGED=true on the controller.
+    command: ["nsenter", "--mount=/proc/1/ns/mnt", "--"]
+    args:
+      - sh
+      - -c
+      - |
+        set -ex
+
+        TARGET_VERSION="${SYSTEM_UPGRADE_PLAN_LATEST_VERSION}"
+        if [ -z "$TARGET_VERSION" ]; then
+          echo "No target version specified"
+          exit 1
+        fi
+        # pacman package versions don't carry the "v" prefix
+        TARGET_VERSION="${TARGET_VERSION#v}"
+
+        pacman -Sy --noconfirm
+
+        # 1. kubeadm first -- kubeadm itself must already be at the target
+        #    version before "kubeadm upgrade apply" will offer it.
+        pacman -S --noconfirm kubeadm
+        NEW_KUBEADM="$(kubeadm version -o short)"
+        if [ "$NEW_KUBEADM" != "v$TARGET_VERSION" ]; then
+          echo "kubeadm did not reach v$TARGET_VERSION (got $NEW_KUBEADM)"
+          exit 1
+        fi
+
+        # 2. Actually roll the control plane forward. This is the step the
+        #    previous version of this script was missing entirely -- it only
+        #    ever bumped packages, leaving the running static pods behind
+        #    (discovered when apiserver/controller-manager/scheduler were
+        #    still on the old version despite kubeadm/kubelet already being
+        #    newer). One retry: a transient apiserver timeout during the
+        #    etcd/apiserver restart is common and usually clears on a second
+        #    attempt.
+        kubeadm upgrade apply "v$TARGET_VERSION" -y || kubeadm upgrade apply "v$TARGET_VERSION" -y
+
+        # 3. Bring kubelet/kubectl in line with the new control plane.
+        pacman -S --noconfirm kubelet kubectl
+
+        # 4. kubelet parses every file in the static-pod manifest directory
+        #    regardless of extension -- a stray backup file left in there
+        #    (e.g. "kube-apiserver.yaml.bak.*") gets parsed as a competing
+        #    pod definition and can silently keep a component pinned to the
+        #    old image forever. Sweep anything that isn't one of the four
+        #    real manifests out to a safe location before restarting kubelet.
+        mkdir -p /etc/kubernetes/tmp
+        find /etc/kubernetes/manifests -maxdepth 1 -type f \
+          ! -name etcd.yaml \
+          ! -name kube-apiserver.yaml \
+          ! -name kube-controller-manager.yaml \
+          ! -name kube-scheduler.yaml \
+          -exec mv -t /etc/kubernetes/tmp/ {} +
+
+        systemctl restart kubelet
+
+        # 5. Confirm the node actually reports the new version before
+        #    handing control back to system-upgrade-controller.
+        for i in $(seq 1 30); do
+          v=$(kubectl --kubeconfig=/etc/kubernetes/admin.conf get node "$SYSTEM_UPGRADE_NODE_NAME" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null || true)
+          if [ "$v" = "v$TARGET_VERSION" ]; then
+            echo "Node now reports kubelet $v"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "Node did not report v$TARGET_VERSION within 5 minutes (last seen: $v)"
+        exit 1
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/os: linux
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

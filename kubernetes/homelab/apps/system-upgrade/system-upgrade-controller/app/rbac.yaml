@@ -1,0 +1,163 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: system-upgrade
+  namespace: system-upgrade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system-upgrade
+rules:
+  # Allow checking node status and updating node labels/annotations
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch", "update", "list"]
+
+  # Allow managing pods for upgrades
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+  # Allow managing pods/eviction for node draining
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+
+  # Allow checking pod status
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch", "update"]
+
+  # Allow managing jobs for upgrade processes
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+  # Allow managing daemonsets
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list", "watch"]
+
+  # Allow managing events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+
+  # Allow managing namespaces
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "patch", "update"]
+
+  # Allow managing configmaps for storing state
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+  # Allow managing secrets if needed
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+
+  # Allow managing plans
+  - apiGroups: ["upgrade.cattle.io"]
+    resources: ["plans"]
+    verbs: ["get", "list", "watch"]
+
+  # Allow managing plan status
+  - apiGroups: ["upgrade.cattle.io", ""]
+    resources: ["plans", "plans/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system-upgrade
+subjects:
+  - kind: ServiceAccount
+    name: system-upgrade
+    namespace: system-upgrade
+roleRef:
+  kind: ClusterRole
+  name: system-upgrade
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Additional Role for namespace-specific operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: system-upgrade
+  namespace: system-upgrade
+rules:
+  # Allow managing pods in the system-upgrade namespace
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+  # Allow managing configmaps in the system-upgrade namespace
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+  # Allow managing secrets in the system-upgrade namespace
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+  # Allow managing persistent volume claims if needed
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: system-upgrade
+  namespace: system-upgrade
+subjects:
+  - kind: ServiceAccount
+    name: system-upgrade
+    namespace: system-upgrade
+roleRef:
+  kind: Role
+  name: system-upgrade
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Additional permissions for metrics collection
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system-upgrade-metrics
+rules:
+  # Allow access to the metrics API
+  - apiGroups: ["metrics.k8s.io", ""]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+
+  # Allow access to custom metrics if using them
+  - apiGroups: ["custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system-upgrade-metrics
+subjects:
+  - kind: ServiceAccount
+    name: system-upgrade
+    namespace: system-upgrade
+roleRef:
+  kind: ClusterRole
+  name: system-upgrade-metrics
+  apiGroup: rbac.authorization.k8s.io

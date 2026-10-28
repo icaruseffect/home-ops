@@ -1,0 +1,23 @@
+---
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: home-ca.lan # The bundle name will also be used for the target
+spec:
+  sources:
+    - useDefaultCAs: true
+    - secret:
+        name: "ca-key-pair"
+        key: "tls.crt"
+    # Self-signed root that issued the ca-key-pair intermediate. Without it
+    # the bundle can't build a full chain to a trust anchor (see
+    # configmap-home-root-ca.yaml).
+    - configMap:
+        name: "home-root-ca"
+        key: "root-ca.pem"
+  target:
+    configMap:
+      key: "root-certs.pem"
+      metadata:
+        labels:
+          app.kubernetes.io/component: "trust-bundle"

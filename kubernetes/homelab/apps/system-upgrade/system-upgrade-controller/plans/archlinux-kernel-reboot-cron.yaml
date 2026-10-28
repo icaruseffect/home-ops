@@ -1,0 +1,30 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kubernetes/cronjob-batch-v1.json
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: archlinux-kernel-reboot-trigger
+  namespace: system-upgrade
+spec:
+  # Sunday 03:00 -- adjust to taste. This only *triggers* a re-check; the
+  # Plan itself is a no-op (no reboot) if pacman has no kernel update.
+  schedule: "0 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: system-upgrade
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: bitnami/kubectl:1.36
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -ex
+                  kubectl patch plan archlinux-kernel-reboot -n system-upgrade \
+                    --type=merge -p "{\"spec\":{\"version\":\"weekly-$(date +%Y%m%d)\"}}"

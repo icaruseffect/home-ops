@@ -1,0 +1,62 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: k8up
+  namespace: k8up-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: k8up
+      version: 4.10.0
+      sourceRef:
+        kind: HelmRepository
+        name: k8up
+        namespace: flux-system
+  maxHistory: 3
+  install:
+    crds: Create
+    remediation: { retries: 3 }
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+    remediation: { retries: 3 }
+  values:
+    k8up:
+      timezone: Europe/Berlin
+      # opt-in: only PVCs carrying k8up.io/backup=true are touched
+      skipWithoutAnnotation: true
+      # default resources for every job pod k8up spawns
+      globalResources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      envVars:
+        - name: BACKUP_GLOBAL_CONCURRENT_BACKUP_JOBS_LIMIT
+          value: "1"
+        - name: BACKUP_GLOBAL_CONCURRENT_PRUNE_JOBS_LIMIT
+          value: "1"
+        - name: BACKUP_GLOBAL_CONCURRENT_CHECK_JOBS_LIMIT
+          value: "1"
+        - name: BACKUP_GLOBAL_CONCURRENT_RESTORE_JOBS_LIMIT
+          value: "1"
+        - name: BACKUP_GLOBAL_FAILED_JOBS_HISTORY_LIMIT
+          value: "3"
+        - name: BACKUP_GLOBAL_SUCCESSFUL_JOBS_HISTORY_LIMIT
+          value: "1"
+    metrics:
+      serviceMonitor:
+        enabled: true
+        scrapeInterval: 60s
+      prometheusRule:
+        enabled: true
+        createDefaultRules: true
+      grafanaDashboard:
+        enabled: true
+    resources:
+      requests: { cpu: 20m, memory: 128Mi }
+      limits: { memory: 256Mi }
