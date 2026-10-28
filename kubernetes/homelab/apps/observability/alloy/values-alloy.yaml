@@ -44,6 +44,9 @@ configReloader:
     - --reload-timeout=5m
 
 controller:
+  # Single-node cluster: a Deployment is behaviorally identical to the former
+  # DaemonSet here. Syslog inputs reach the pod via Services (NodePort 30514,
+  # ClusterIP UDP 1514). Revisit the DaemonSet if nodes are added.
   type: deployment
   replicas: 1
 
