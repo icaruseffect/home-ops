@@ -46,10 +46,8 @@ configReloader:
 
 controller:
   type: deployment
-  # Alloy intentionally not running on the talos cluster (user decision
-  # 2026-10-28): keep the Deployment scaled to 0. To run it, scale
-  # manually or bump this value.
-  replicas: 0
+  # Single replica on the talos cluster (user decision 2026-10-28).
+  replicas: 1
   volumes:
     extra:
       - name: alloy-storage
