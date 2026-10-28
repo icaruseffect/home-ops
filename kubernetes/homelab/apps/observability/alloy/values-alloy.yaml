@@ -17,7 +17,7 @@ alloy:
       # can't take a full core uncontested on a node already at 75% CPU
       # requests — see the disk-I/O incident notes in config.alloy.
       cpu: 500m
-      memory: 256Mi
+      memory: 384Mi
 
   storagePath: /tmp/alloy
 
@@ -34,8 +34,17 @@ alloy:
       - name: alloy-storage
         mountPath: /tmp/alloy
 
+# The default 30s reload timeout is shorter than a full config evaluation on
+# this node (27-83s per component under load); each retry restarts a reload.
+# customArgs replaces the chart's default args, so they are restated here.
+configReloader:
+  customArgs:
+    - --watched-dir=/etc/alloy
+    - --reload-url=http://localhost:12345/-/reload
+    - --reload-timeout=5m
+
 controller:
-  type: daemonset
+  type: deployment
   replicas: 1
 
   volumes:
