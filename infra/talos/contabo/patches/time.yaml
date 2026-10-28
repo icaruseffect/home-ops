@@ -1,0 +1,7 @@
+---
+machine:
+  time:
+    disabled: false # Indicates if the time service is disabled for the machine.
+    #     # Specifies time (NTP) servers to use for setting the system time.
+    servers:
+      - time.cloudflare.com

@@ -1,0 +1,4 @@
+---
+# patches/allow-controlplane-workloads.yaml
+cluster:
+  allowSchedulingOnControlPlanes: true

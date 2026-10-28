@@ -140,12 +140,18 @@ controlPlane:
         etcd:
           extraArgs:
             listen-metrics-urls: http://0.0.0.0:2381
+            quota-backend-bytes: "8589934592"
         controllerManager:
           extraArgs:
             bind-address: 0.0.0.0
         scheduler:
           extraArgs:
             bind-address: 0.0.0.0
+        apiServer:
+          extraArgs:
+            request-timeout: "120s"
+            max-requests-inflight: "400"
+            max-mutating-requests-inflight: "200"
         proxy:
           disabled: true
 
