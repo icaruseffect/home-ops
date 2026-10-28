@@ -90,3 +90,16 @@ kind: ServiceAccount
 metadata:
   name: envoy-crowdsec-bouncer
   namespace: crowdsec
+---
+# minAvailable 1: the gateway fail-closes (403, UAEX) when no bouncer
+# endpoint answers, so evictions must never drain both replicas.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: envoy-crowdsec-bouncer
+  namespace: crowdsec
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy-crowdsec-bouncer
