@@ -9,7 +9,7 @@ pkgs.mkShell {
     pkgs.kubectl
     pkgs.kubernetes-helm
     pkgs.kustomize
-    pkgs.pre-commit
+    pkgs.prek
     pkgs.gitleaks
     pkgs.ydiff
     pkgs.sops
