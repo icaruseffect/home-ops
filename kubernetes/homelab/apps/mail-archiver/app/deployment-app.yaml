@@ -1,0 +1,72 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-archiver
+  namespace: mail-archiver
+  labels:
+    app: mail-archiver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mail-archiver
+  template:
+    metadata:
+      labels:
+        app: mail-archiver
+    spec:
+      containers:
+        - name: mail-archiver
+          image: s1t5/mailarchiver:latest
+          ports:
+            - containerPort: 5000
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - |
+              export ConnectionStrings__DefaultConnection="Host=${DB_HOST};Database=${DB_NAME};Username=${DB_USER};Password=${POSTGRES_PASSWORD};"
+              exec dotnet MailArchiver.dll
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mail-archiver-postgres-cluster-app
+                  key: host
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mail-archiver-postgres-cluster-app
+                  key: dbname
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mail-archiver-postgres-cluster-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mail-archiver-postgres-cluster-app
+                  key: password
+          envFrom:
+            - configMapRef:
+                name: mail-archiver-config
+            - secretRef:
+                name: mail-archiver-secret
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      restartPolicy: Always

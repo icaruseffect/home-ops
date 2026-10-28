@@ -1,0 +1,11 @@
+---
+# https://github.com/blakeblackshear/blakeshome-charts
+# https://blakeblackshear.github.io/blakeshome-charts/
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: blakeshome-charts
+  namespace: surveillance
+spec:
+  interval: 1h
+  url: https://blakeblackshear.github.io/blakeshome-charts/

@@ -1,0 +1,37 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: giantswarm-charts
+spec:
+  interval: 5m
+  url: https://giantswarm.github.io/control-plane-catalog/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: silence-operator
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: silence-operator
+      version: "*"
+      sourceRef:
+        kind: HelmRepository
+        name: giantswarm-charts
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    cleanupOnFail: true
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    alertmanagerAddress: http://alertmanager-operated.observability.svc.cluster.local:9093
+    image:
+      registry: quay.io
+    networkPolicy:
+      enabled: false

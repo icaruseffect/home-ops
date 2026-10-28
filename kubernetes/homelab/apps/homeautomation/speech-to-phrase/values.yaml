@@ -1,0 +1,9 @@
+---
+env:
+  TZ: "Europe/Berlin"
+  HA_WEBSOCKET_URI: "ws://home-assistant:8080/api/websocket"
+  HA_TOKEN:
+    valueFrom:
+      secretKeyRef:
+        name: ha-speech-to-phrase
+        key: HA_TOKEN

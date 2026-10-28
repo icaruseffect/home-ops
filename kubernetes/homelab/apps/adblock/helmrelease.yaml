@@ -11,9 +11,9 @@ spec:
       chart: adguard-home
       sourceRef:
         kind: HelmRepository
-        name: k8s-at-home
+        name: rm3l-charts
         namespace: flux-system
-      version: "*"
+      version: "0.24.0"
   install:
     remediation:
       retries: 3

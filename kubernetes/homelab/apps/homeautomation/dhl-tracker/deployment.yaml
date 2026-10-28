@@ -1,0 +1,59 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dhl-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dhl-tracker
+  template:
+    metadata:
+      labels:
+        app: dhl-tracker
+    spec:
+      containers:
+        - name: dhl-tracker
+          image: harbor.lab.lan/library/dhl-tracker:latest
+          env:
+            - name: MQTT_HOST
+              value: "mqtt.lan"
+            - name: MQTT_PORT
+              value: "8883"
+            - name: MQTT_TLS
+              value: "true"
+            # Custom internal CA used by the MQTT broker's TLS listener, trusted
+            # via the cluster-wide trust-manager bundle (see cert-manager/trust-manager).
+            - name: MQTT_TLS_CA_CERT
+              value: "/etc/dhl-tracker/ca/root-certs.pem"
+            - name: MQTT_DISCOVERY_PREFIX
+              value: "homeassistant"
+            - name: MQTT_BASE_TOPIC
+              value: "dhl"
+            # Poll every 5 min while in transit. Once delivered, stays visible in
+            # Home Assistant for this many days before being untracked.
+            - name: POLL_INTERVAL
+              value: "300"
+            - name: DELIVERED_RETENTION_DAYS
+              value: "3"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: MQTT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dhl-tracker-mqtt
+                  key: username
+            - name: MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dhl-tracker-mqtt
+                  key: password
+          volumeMounts:
+            - mountPath: /etc/dhl-tracker/ca/root-certs.pem
+              name: trust-bundle
+              subPath: root-certs.pem
+      volumes:
+        - name: trust-bundle
+          configMap:
+            name: home-ca.lan

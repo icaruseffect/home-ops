@@ -1,0 +1,15 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: harbor
+resources:
+  - ./helmrepo.yaml
+  - ./helmrelease.yaml
+  - ./secret-harbor-db.sops.yaml
+configMapGenerator:
+  - name: harbor-values
+    files:
+      - values.yaml
+    options:
+      disableNameSuffixHash: true

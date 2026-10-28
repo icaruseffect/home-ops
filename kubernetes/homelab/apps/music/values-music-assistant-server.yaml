@@ -1,0 +1,68 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: music-assistant-server-values
+  namespace: music
+data:
+  values.yaml: |
+    deploymentStrategy:
+      type: Recreate
+
+    image:
+      repository: ghcr.io/music-assistant/server
+      tag: ""
+      pullPolicy: IfNotPresent
+
+    service:
+      type: ClusterIP
+      ports:
+        web:
+          port: 80
+          targetPort: 8095
+        devices:
+          port: 8097
+          targetPort: 8097
+
+    hostNetwork: false
+
+    nodeSelector:
+      kubernetes.io/hostname: homelab
+
+    ingress:
+      enabled: true
+      hostname: music.lab.lan
+      annotations:
+        k8s-gateway.dns/hostname: music.lab.lan
+        cert-manager.io/cluster-issuer: ca-issuer
+      tls:
+        enabled: true
+        secretName: music-assistant-tls
+
+    oauth2Proxy:
+      enabled: false
+      image:
+        repository: quay.io/oauth2-proxy/oauth2-proxy
+        tag: v7.14.2
+        pullPolicy: IfNotPresent
+      config:
+        provider: oidc
+        providerDisplayName: "Authentik"
+        skipProviderButton: true
+        passAuthorizationHeader: true
+        setAuthorizationHeader: true
+        oidcIssuerURL: ""
+        redirectURL: "https://music.lab.lan/oauth2/callback"
+        sessionStoreType: cookie
+        cookieRefresh: 119m
+        clientID: ""
+        clientSecret: ""
+        cookieSecret: ""
+      secretRef: ""
+
+    persistence:
+      enabled: true
+      size: 10Gi
+      mountPath: /data
+      accessMode: ReadWriteOnce
+      storageClass: openebs-hostpath

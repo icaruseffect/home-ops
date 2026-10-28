@@ -1,0 +1,10 @@
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: frigate
+  namespace: surveillance
+spec:
+  image: ghcr.io/blakeblackshear/frigate
+  interval: 6h
+  # GHCR public image — no secretRef needed unless you hit rate limits

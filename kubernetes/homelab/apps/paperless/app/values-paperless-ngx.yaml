@@ -96,11 +96,17 @@ paperless:
     sanityTask: 30 0 * *
     emptyTrashTask: 30 0 * *
   redis:
+    # moved off the bundled Bitnami subchart onto the shared Dragonfly
+    # instance in ns dragonfly (also serving Harbor) - db index 8, chosen to
+    # not collide with Harbor's 0/1/2/5. paperless.redis.* has no db-index
+    # field (its URI template is host:port only, always db0), so
+    # existingSecret (chart hardcodes the key name `uri`) is used instead of
+    # host/port/password to get the /8 suffix in.
     host: ""
     port: 6379
     username: ""
-    password: paperless
-    existingSecret: ""
+    password: ""
+    existingSecret: paperless-redis-auth
     prefix: ""
   # CHANGED: use the CNPG-managed secret instead of plaintext credentials.
   # The chart reads keys `username` and `password`; `paperless-db` is
@@ -429,6 +435,11 @@ postgresql:
 #
 # The real fix is dropping Bitnami here entirely - the broker holds nothing
 # worth keeping.
+#
+# DONE: dropped. paperless.redis.existingSecret above now points at the
+# shared Dragonfly instance in ns dragonfly. Rest of this block left as
+# historical context (condition: redis.enabled in Chart.yaml means it's
+# inert either way).
 redis:
   global:
     imageRegistry: docker.io
@@ -438,7 +449,7 @@ redis:
     registry: docker.io
     repository: bitnamisecure/redis
     tag: latest
-  enabled: true
+  enabled: false
   architecture: standalone
   auth:
     password: paperless
@@ -446,13 +457,18 @@ redis:
 tika:
   enabled: true
   replicaCount: 1
+  # CHANGED: limits were 2/2000Mi against a 50m/100Mi request (a 40x/20x burst
+  # allowance) with no documented reason — one of the contributors to the
+  # node running at 352% CPU-limit overcommit. Trimmed to a still-generous
+  # 8x/10x; raise again if large-document extraction starts getting OOMKilled
+  # or CPU-throttled.
   resources:
     limits:
-      cpu: 2
-      memory: 2000Mi
+      cpu: 400m
+      memory: 768Mi
     requests:
       cpu: 50m
-      memory: 100Mi
+      memory: 256Mi
 gotenberg:
   enabled: true
   gotenberg:

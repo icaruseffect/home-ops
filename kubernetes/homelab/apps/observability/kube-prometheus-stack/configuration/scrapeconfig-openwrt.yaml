@@ -1,0 +1,14 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: scrape-openwrt
+  namespace: observability
+  labels:
+    prometheus: system-monitoring-prometheus
+spec:
+  staticConfigs:
+    - labels:
+        job: prometheus
+      targets:
+        - router.lan:9100

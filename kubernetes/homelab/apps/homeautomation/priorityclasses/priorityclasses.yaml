@@ -1,0 +1,26 @@
+---
+# Protects core home-automation services from being picked first by
+# kubelet's graceful eviction manager and from scheduling preemption under
+# node memory pressure. Values sit well below the cluster's infra-critical
+# tiers (openebs CSI: 900000000/900001000, system-*-critical: 2000000000+)
+# and well above the default (0) used by everything else.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: homelab-important
+value: 1000000
+globalDefault: false
+description: >-
+  Home-automation services that should survive node memory pressure longer
+  than default-priority workloads (home-assistant, zigbee2mqtt).
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: homelab-critical
+value: 2000000
+globalDefault: false
+description: >-
+  The most important home-automation service on the node (mosquitto) —
+  higher than homelab-important so it is evicted/preempted last among the
+  three.

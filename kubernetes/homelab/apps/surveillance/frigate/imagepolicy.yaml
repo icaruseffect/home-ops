@@ -1,0 +1,16 @@
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: frigate
+  namespace: surveillance
+spec:
+  imageRepositoryRef:
+    name: frigate
+  policy:
+    semver:
+      range: ">=0.14.0"
+  filterTags:
+    # only match plain vX.Y.Z tags — excludes -tensorrt, -rk, -rocm, stable, dev-*
+    pattern: '^(?P<version>[0-9]+\.[0-9]+\.[0-9]+)$'
+    extract: "$version"

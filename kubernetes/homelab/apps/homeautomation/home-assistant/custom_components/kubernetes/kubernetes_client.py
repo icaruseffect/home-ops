@@ -1,0 +1,2504 @@
+"""Kubernetes client for Home Assistant integration."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
+import functools
+import ipaddress
+import json
+import logging
+import ssl
+import time
+from typing import Any
+
+import aiohttp
+
+# Use absolute import to avoid circular import with our custom component named 'kubernetes'
+try:
+    import kubernetes.client as k8s_client
+    from kubernetes.client.rest import ApiException
+
+except ImportError as e:
+    raise ImportError(f"kubernetes package not installed: {e}") from e
+
+from .const import (
+    CONF_API_TOKEN,
+    CONF_CA_CERT,
+    CONF_CLUSTER_NAME,
+    CONF_EXCLUDE_JOB_PODS,
+    CONF_HOST,
+    CONF_MONITOR_ALL_NAMESPACES,
+    CONF_NAMESPACE,
+    CONF_PORT,
+    CONF_USE_IN_CLUSTER,
+    CONF_VERIFY_SSL,
+    DEFAULT_EXCLUDE_JOB_PODS,
+    DEFAULT_MONITOR_ALL_NAMESPACES,
+    DEFAULT_NAMESPACE,
+    DEFAULT_PORT,
+    DEFAULT_USE_IN_CLUSTER,
+    DEFAULT_VERIFY_SSL,
+    DEFAULT_WATCH_TIMEOUT_SECONDS,
+    IN_CLUSTER_TOKEN_PATH,
+    WORKLOAD_TYPE_JOB,
+)
+from .metrics_parser import parse_cpu_quantity, parse_memory_quantity
+
+# How long to cache a freshly-read in-cluster token before re-reading the file.
+# Projected SA tokens rotate roughly hourly by default; 60 s keeps us responsive
+# without hitting tmpfs on every API call.
+IN_CLUSTER_TOKEN_CACHE_TTL = 60.0
+
+_LOGGER = logging.getLogger(__name__)
+
+# Waiting reasons that are transient and expected during normal startup — not problems.
+_BENIGN_WAITING_REASONS = frozenset({"ContainerCreating", "PodInitializing"})
+
+
+def normalize_host(host: str) -> str:
+    """Bracket a bare IPv6 literal so it is safe to interpolate into URLs.
+
+    All URLs are built as ``https://{host}:{port}/...``; a bare IPv6 literal
+    (e.g. ``2001:db8::1``) is ambiguous there because its colons collide with
+    the port delimiter. Bracketing it (``[2001:db8::1]``) makes the URL valid.
+
+    Idempotent: already-bracketed values, hostnames, and IPv4 addresses are
+    returned unchanged.
+    """
+    if not host:
+        return host
+    if host.startswith("["):  # already bracketed
+        return host
+    try:
+        if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
+            return f"[{host}]"
+    except ValueError:
+        pass  # hostname or IPv4 — leave as-is
+    return host
+
+
+async def build_ssl_param(
+    verify_ssl: bool, ca_cert: str | None
+) -> ssl.SSLContext | bool:
+    """Return the value to pass to aiohttp's ``ssl=`` argument.
+
+    A bare ``ssl=True`` makes aiohttp verify against the system trust store,
+    ignoring a cluster-issued CA (issue #265), so verification always goes
+    through an ``SSLContext``. ``create_default_context`` reads ``ca_cert``
+    from disk, hence the executor.
+
+    - ``verify_ssl=False`` -> ``False`` (no verification)
+    - ``verify_ssl=True`` + ``ca_cert`` -> context trusting that CA
+    - ``verify_ssl=True`` + no ``ca_cert`` -> default context (system trust)
+
+    Shared by the runtime client and the config flow so setup validates the
+    connection with exactly the TLS settings the entry will run with.
+    """
+    if not verify_ssl:
+        return False
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, lambda: ssl.create_default_context(cafile=ca_cert)
+    )
+
+
+class ResourceVersionExpired(Exception):
+    """Raised when a watch's resourceVersion is too old (HTTP 410 or ERROR event 410)."""
+
+
+class KubernetesApiError(Exception):
+    """Raised when a list/count request returns a non-200 status.
+
+    List/count methods raise instead of returning empty results so the
+    coordinator reports ``UpdateFailed`` — an outage must never look like an
+    empty cluster and prune the user's entities.
+    """
+
+
+class KubernetesClient:
+    """Kubernetes client for Home Assistant integration."""
+
+    def __init__(self, config_data: dict[str, Any]) -> None:
+        """Initialize the Kubernetes client."""
+        self.host = normalize_host(config_data[CONF_HOST])
+        self.port = config_data.get(CONF_PORT, DEFAULT_PORT)
+        # Static token is the fallback (always populated) and the source of
+        # truth when use_in_cluster=False. When use_in_cluster=True, the
+        # api_token property prefers the projected SA file (with TTL cache)
+        # so token rotations are picked up without a config-flow restart.
+        self._static_api_token: str = config_data.get(CONF_API_TOKEN, "")
+        self._use_in_cluster: bool = config_data.get(
+            CONF_USE_IN_CLUSTER, DEFAULT_USE_IN_CLUSTER
+        )
+        self._token_cache: str = ""
+        self._token_cache_time: float = 0.0
+        # ponytail: one init-time line instead of per-request logging — the
+        # source only changes with a config reload (issue #360).
+        _LOGGER.debug(
+            "API token source: %s",
+            "in-cluster projected ServiceAccount file (configured token is a fallback)"
+            if self._use_in_cluster
+            else "static token from the config entry",
+        )
+        self.cluster_name = config_data.get(CONF_CLUSTER_NAME, "default")
+        # Handle namespace as list (new) or string (legacy)
+        namespace_config = config_data.get(CONF_NAMESPACE, [DEFAULT_NAMESPACE])
+        if isinstance(namespace_config, str):
+            # Legacy: single namespace as string
+            self.namespaces = [namespace_config]
+        elif isinstance(namespace_config, list):
+            self.namespaces = (
+                namespace_config if namespace_config else [DEFAULT_NAMESPACE]
+            )
+        else:
+            self.namespaces = [DEFAULT_NAMESPACE]
+        # Keep namespace for backward compatibility in error messages
+        self.namespace = self.namespaces[0] if self.namespaces else DEFAULT_NAMESPACE
+        self.monitor_all_namespaces = config_data.get(
+            CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+        )
+        self.exclude_job_pods = config_data.get(
+            CONF_EXCLUDE_JOB_PODS, DEFAULT_EXCLUDE_JOB_PODS
+        )
+        self.ca_cert = config_data.get(CONF_CA_CERT)
+        self.verify_ssl = config_data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+
+        # Cached aiohttp ssl= value (built lazily via build_ssl_param; see
+        # _get_ssl_param). None until first use.
+        self._ssl_context: ssl.SSLContext | bool | None = None
+
+        # Error deduplication tracking
+        self._last_auth_error_time = 0.0
+        self._auth_error_cooldown = 300.0  # 5 minutes between auth error logs
+
+        # Set only by the connection probe (_test_connection_aiohttp) when the
+        # API server confirms a 401. The coordinator turns this into
+        # ConfigEntryAuthFailed so Home Assistant starts the reauth flow.
+        self.auth_failed = False
+
+        # In-flight background token-file refresh (see api_token / _ensure_refresh_task).
+        self._token_refresh_task: asyncio.Task[None] | None = None
+
+        # Initialize Kubernetes client
+        self._setup_kubernetes_client()
+
+    def _read_token_file(self) -> str | None:
+        """Synchronously read+strip the projected SA token file.
+
+        Blocking by design — callers must run this off the event loop (see
+        _ensure_refresh_task) except when no loop is running at all.
+        """
+        try:
+            with open(IN_CLUSTER_TOKEN_PATH, encoding="utf-8") as fh:
+                return fh.read().strip()
+        except OSError as err:
+            _LOGGER.debug(
+                "Failed to read in-cluster token at %s (%s); using last cached/static token",
+                IN_CLUSTER_TOKEN_PATH,
+                err,
+            )
+            return None
+
+    def _store_token_if_present(self, token: str | None) -> None:
+        """Cache a freshly read token, if the read actually returned one."""
+        if token:
+            self._token_cache = token
+            self._token_cache_time = time.time()
+
+    def load_in_cluster_token(self) -> None:
+        """Populate the in-cluster token cache before the first request.
+
+        Blocking — run it in the executor. A fresh client has an empty cache,
+        and the event-loop path of api_token then serves the stored static
+        token, which for in-cluster entries is usually the pod-bound token of
+        a previous pod and gets a 401 (issue #408).
+        """
+        if self._use_in_cluster:
+            self._store_token_if_present(self._read_token_file())
+
+    def _ensure_refresh_task(self) -> asyncio.Task[None]:
+        """Start (or return the already in-flight) background token refresh."""
+        if self._token_refresh_task is None:
+            self._token_refresh_task = asyncio.get_running_loop().create_task(
+                self._do_refresh_token()
+            )
+        return self._token_refresh_task
+
+    async def _do_refresh_token(self) -> None:
+        """Read the token file in the executor and update the cache."""
+        try:
+            loop = asyncio.get_running_loop()
+            token = await loop.run_in_executor(None, self._read_token_file)
+            self._store_token_if_present(token)
+        except Exception:  # never let a fire-and-forget task die
+            _LOGGER.debug("In-cluster token refresh failed", exc_info=True)
+        finally:
+            self._token_refresh_task = None
+
+    @property
+    def api_token(self) -> str:
+        """Bearer token used for the cluster API.
+
+        When use_in_cluster=True the projected SA token file backs this
+        property with a short TTL cache so token rotations are picked up
+        without restarting the integration. On read failure the last cached
+        value (or the static token from the config entry) is returned as a
+        fallback.
+
+        Thread-safety: the cache check-then-update is intentionally lock-free.
+        On the executor-thread path (no running loop) two concurrent
+        expirations may both read the file and write the same value; the GIL
+        makes individual attribute access safe and the worst case is one
+        redundant tmpfs read. On the event-loop path concurrent expirations
+        are deduped into a single background task (_ensure_refresh_task), so
+        there is no redundant read there. Adding a lock here would be more
+        expensive than the race it prevents.
+        """
+        if not self._use_in_cluster:
+            return self._static_api_token
+
+        now = time.time()
+        if (
+            self._token_cache
+            and (now - self._token_cache_time) < IN_CLUSTER_TOKEN_CACHE_TTL
+        ):
+            return self._token_cache
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop running (e.g. urllib3's refresh_api_key_hook, which
+            # runs in the official client's executor thread) — blocking here
+            # is safe.
+            self._store_token_if_present(self._read_token_file())
+            return self._token_cache or self._static_api_token
+
+        # ponytail: a loop is running, so we must not block it. Kick off (or
+        # join) a background refresh and serve the stale cached/static token
+        # for this call — projected tokens overlap well beyond the 60s TTL,
+        # so a request made in the few ms before the refresh lands is fine.
+        # Upgrade path: none needed unless the SA token TTL is ever tightened
+        # to seconds, in which case this call would need to await the refresh.
+        self._ensure_refresh_task()
+        return self._token_cache or self._static_api_token
+
+    @api_token.setter
+    def api_token(self, value: str) -> None:
+        """Update the static (fallback) token and drop any in-cluster cache."""
+        self._static_api_token = value
+        self._token_cache = ""  # nosec B105
+        self._token_cache_time = 0.0
+
+    def invalidate_token_cache(self) -> None:
+        """Force the next api_token read to re-fetch the projected SA token."""
+        self._token_cache_time = 0.0
+
+    def _refresh_api_key_hook(self, configuration: Any) -> None:
+        """Refresh the kubernetes Configuration's bearer token before each call."""
+        configuration.api_key["authorization"] = f"Bearer {self.api_token}"
+
+    def _log_error(self, operation: str, error: Exception, context: str = "") -> None:
+        """Log errors with structured context and actionable information."""
+        cluster_info = f"cluster={self.cluster_name}, host={self.host}:{self.port}"
+        namespace_info = (
+            f"namespace={self.namespace}"
+            if not self.monitor_all_namespaces
+            else "all_namespaces"
+        )
+
+        if isinstance(error, ApiException):
+            # Handle Kubernetes API exceptions
+            if error.status == 401:
+                # The projected SA token may have just rotated — drop any
+                # cached value so the next call re-reads from disk.
+                if self._use_in_cluster:
+                    self.invalidate_token_cache()
+                # Deduplicate authentication errors to reduce log noise
+                current_time = time.time()
+                if (
+                    current_time - self._last_auth_error_time
+                    > self._auth_error_cooldown
+                ):
+                    _LOGGER.error(
+                        "Authentication failed for %s (%s, %s). Check API token and RBAC permissions. "
+                        "This error will be suppressed for 5 minutes to reduce log noise. "
+                        "Error details: status=%s, reason='%s'",
+                        operation,
+                        cluster_info,
+                        namespace_info,
+                        error.status,
+                        error.reason,
+                    )
+                    self._last_auth_error_time = current_time
+                else:
+                    _LOGGER.debug(
+                        "Authentication failed for %s (%s, %s) - using fallback method",
+                        operation,
+                        cluster_info,
+                        namespace_info,
+                    )
+            elif error.status == 403:
+                _LOGGER.error(
+                    "Permission denied for %s (%s, %s). Check RBAC roles and namespace access.",
+                    operation,
+                    cluster_info,
+                    namespace_info,
+                )
+            elif error.status == 404:
+                _LOGGER.error(
+                    "Resource not found for %s (%s, %s). Check namespace and resource names.",
+                    operation,
+                    cluster_info,
+                    namespace_info,
+                )
+            elif error.status >= 500:
+                _LOGGER.error(
+                    "Kubernetes API server error during %s (%s, %s): %s (status: %s)",
+                    operation,
+                    cluster_info,
+                    namespace_info,
+                    error.reason,
+                    error.status,
+                )
+            else:
+                _LOGGER.error(
+                    "API error during %s (%s, %s): %s (status: %s)",
+                    operation,
+                    cluster_info,
+                    namespace_info,
+                    error.reason,
+                    error.status,
+                )
+        elif isinstance(error, aiohttp.ClientError):
+            # Handle network/HTTP errors
+            _LOGGER.error(
+                "Network error during %s (%s, %s): %s",
+                operation,
+                cluster_info,
+                namespace_info,
+                str(error),
+            )
+        elif isinstance(error, asyncio.TimeoutError):
+            _LOGGER.error(
+                "Timeout during %s (%s, %s). Check network connectivity and API server response time.",
+                operation,
+                cluster_info,
+                namespace_info,
+            )
+        else:
+            # Handle other exceptions
+            _LOGGER.error(
+                "Unexpected error during %s (%s, %s): %s",
+                operation,
+                cluster_info,
+                namespace_info,
+                str(error),
+            )
+
+    def _log_success(self, operation: str, details: str = "") -> None:
+        """Log successful operations with context."""
+        cluster_info = f"cluster={self.cluster_name}, host={self.host}:{self.port}"
+        namespace_info = (
+            f"namespaces={','.join(self.namespaces)}"
+            if not self.monitor_all_namespaces
+            else "all_namespaces"
+        )
+
+        if details:
+            _LOGGER.debug(
+                "Successfully completed %s (%s, %s): %s",
+                operation,
+                cluster_info,
+                namespace_info,
+                details,
+            )
+        else:
+            _LOGGER.debug(
+                "Successfully completed %s (%s, %s)",
+                operation,
+                cluster_info,
+                namespace_info,
+            )
+
+    def _setup_kubernetes_client(self) -> None:
+        """Set up the Kubernetes client configuration."""
+        configuration = k8s_client.Configuration()
+        configuration.host = f"https://{self.host}:{self.port}"
+        # Use the static token here to avoid touching the projected SA file
+        # from the event loop during integration setup; the refresh hook
+        # below replaces this with the live token on subsequent calls (which
+        # run in urllib3's thread pool). The value already carries "Bearer";
+        # never also set api_key_prefix — kubernetes>=37 resolves the prefix
+        # via the 'authorization' alias and would send "Bearer Bearer <token>".
+        configuration.api_key = {"authorization": f"Bearer {self._static_api_token}"}
+        configuration.verify_ssl = self.verify_ssl
+        # When use_in_cluster=True the bearer token rotates underneath us; the
+        # hook re-reads via the api_token property before each request so the
+        # official client never holds a stale token.
+        if self._use_in_cluster:
+            configuration.refresh_api_key_hook = self._refresh_api_key_hook
+
+        if self.ca_cert:
+            configuration.ssl_ca_cert = self.ca_cert
+
+        # Create API clients
+        api_client = k8s_client.ApiClient(configuration)
+        self.core_v1 = k8s_client.CoreV1Api(api_client)
+        self.apps_v1 = k8s_client.AppsV1Api(api_client)
+        self.batch_v1 = k8s_client.BatchV1Api(api_client)  # Added BatchV1Api
+
+        _LOGGER.debug(
+            "Kubernetes client configured: host=%s, verify_ssl=%s, ca_cert=%s",
+            configuration.host,
+            self.verify_ssl,
+            "provided" if self.ca_cert else "none",
+        )
+
+    async def _get_ssl_param(self) -> ssl.SSLContext | bool:
+        """Cached ``build_ssl_param`` for this client's verify_ssl / ca_cert.
+
+        Lock-free on purpose: two concurrent first-callers may each build a
+        context, but both are equivalent so the second write is idempotent.
+        """
+        if self._ssl_context is None:
+            self._ssl_context = await build_ssl_param(self.verify_ssl, self.ca_cert)
+        return self._ssl_context
+
+    async def _test_connection(self) -> bool:
+        """Test the connection to Kubernetes."""
+        # Use aiohttp as primary since it works better with SSL configuration
+        return await self._test_connection_aiohttp()
+
+    async def _probe_api(self, session: aiohttp.ClientSession) -> int:
+        """GET the API root with the current token and return the HTTP status."""
+        async with session.get(
+            f"https://{self.host}:{self.port}/api/v1/",
+            headers={
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+            },
+            ssl=await self._get_ssl_param(),
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as response:
+            return response.status
+
+    async def _test_connection_aiohttp(self) -> bool:
+        """Test the connection using aiohttp as primary method.
+
+        This probe runs on every poll cycle (via get_pods/get_pods_count), which
+        makes it the single place that decides whether the configured token is
+        still accepted. ``auth_failed`` is set only by a confirmed 401 here and
+        cleared by any other status. The coordinator checks it whenever a poll
+        raises, so a 401 becomes ``ConfigEntryAuthFailed`` rather than
+        ``UpdateFailed``.
+        """
+        try:
+            _LOGGER.debug("Testing connection with aiohttp...")
+            async with aiohttp.ClientSession() as session:
+                status = await self._probe_api(session)
+                if status == 401 and self._use_in_cluster:
+                    # A projected ServiceAccount token may have rotated between
+                    # the cached read and this request. Drop the cache and retry
+                    # once so routine rotation never triggers a reauth prompt.
+                    # Read directly here rather than via _ensure_refresh_task:
+                    # joining an already in-flight refresh could return a
+                    # token that finished reading before this invalidation,
+                    # i.e. still the pre-rotation value.
+                    self.invalidate_token_cache()
+                    loop = asyncio.get_running_loop()
+                    token = await loop.run_in_executor(None, self._read_token_file)
+                    self._store_token_if_present(token)
+                    status = await self._probe_api(session)
+                self.auth_failed = status == 401
+                if status == 200:
+                    self._log_success("connection test", "using aiohttp")
+                    return True
+                _LOGGER.error("aiohttp connection test failed with status: %s", status)
+                return False
+        except Exception as ex:
+            self._log_error("aiohttp connection test", ex)
+            return False
+
+    async def get_pods_count(self) -> int:
+        """Get the count of pods in the namespace(s)."""
+        try:
+            # Test connection first
+            if not await self._test_connection():
+                raise KubernetesApiError("Cannot connect to Kubernetes API")
+
+            result = await self._fetch_resource_count("api/v1", "pods")
+            if result is not None:
+                self._log_success("get pods count", f"retrieved {result} pods")
+            return result
+
+        except Exception as ex:
+            self._log_error("get pods count", ex)
+            raise
+
+    async def get_pods(self) -> list[dict[str, Any]]:
+        """Get detailed information about all pods in the namespace(s)."""
+        try:
+            # Test connection first
+            if not await self._test_connection():
+                raise KubernetesApiError("Cannot connect to Kubernetes API")
+
+            # Use aiohttp as primary since it works better with SSL configuration
+            if self.monitor_all_namespaces:
+                result = await self._get_pods_all_namespaces_aiohttp()
+            else:
+                result = await self._get_pods_aiohttp()
+
+            if result is not None:
+                self._log_success("get pods", f"retrieved {len(result)} pods")
+            return result
+
+        except Exception as ex:
+            self._log_error("get pods", ex)
+            raise
+
+    async def _get_pods_aiohttp(self) -> list[dict[str, Any]]:
+        """Get pods using aiohttp for configured namespaces."""
+        all_pods = []
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            for namespace in self.namespaces:
+                async with session.get(
+                    f"https://{self.host}:{self.port}/api/v1/namespaces/{namespace}/pods",
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status != 200:
+                        raise KubernetesApiError(
+                            f"pods request failed for namespace {namespace} "
+                            f"with status {response.status}"
+                        )
+                    data = await response.json()
+                    all_pods.extend(self._parse_pods_data(data.get("items", [])))
+        return all_pods
+
+    async def _get_pods_all_namespaces_aiohttp(self) -> list[dict[str, Any]]:
+        """Get pods using aiohttp for all namespaces."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://{self.host}:{self.port}/api/v1/pods",
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status != 200:
+                        raise KubernetesApiError(
+                            f"pods request failed with status {response.status}"
+                        )
+                    data = await response.json()
+                    return self._parse_pods_data(data.get("items", []))
+        except Exception as ex:
+            self._log_error("aiohttp get all pods", ex)
+            raise
+
+    def _parse_pods_data(self, pods: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Parse raw pod data from Kubernetes API into standardized format."""
+        parsed_pods = []
+
+        for pod in pods:
+            try:
+                metadata = pod.get("metadata", {})
+                spec = pod.get("spec", {})
+                status = pod.get("status", {})
+
+                # Get pod phase
+                phase = status.get("phase", "Unknown")
+
+                # Get container statuses
+                container_statuses = status.get("containerStatuses", [])
+                ready_containers = 0
+                total_containers = len(container_statuses)
+
+                for container_status in container_statuses:
+                    if container_status.get("ready", False):
+                        ready_containers += 1
+
+                # Get restart count
+                restart_count = 0
+                for container_status in container_statuses:
+                    restart_count += container_status.get("restartCount", 0)
+
+                # Get node name
+                node_name = spec.get("nodeName", "N/A")
+
+                # Get pod IP
+                pod_ip = status.get("podIP", "N/A")
+
+                # Get creation timestamp
+                creation_timestamp = metadata.get("creationTimestamp", "N/A")
+
+                # Get labels
+                labels = metadata.get("labels", {})
+
+                # Get owner references (to identify which workload owns this pod)
+                owner_references = metadata.get("ownerReferences", [])
+                owner_kind = "N/A"
+                owner_name = "N/A"
+                if owner_references:
+                    owner = owner_references[0]
+                    owner_kind = owner.get("kind", "N/A")
+                    owner_name = owner.get("name", "N/A")
+
+                # A Job-owned pod is one run of a Job or CronJob. Its name is
+                # unique per run, so tracking it creates an entity that can
+                # never be reused and never gets purged from the registry.
+                if self.exclude_job_pods and owner_kind == WORKLOAD_TYPE_JOB:
+                    continue
+
+                # Container state reasons (waiting / current+last terminated) for observability.
+                container_waiting_reason = None
+                container_terminated_reason = None
+                container_terminated_exit_code = None
+                last_terminated_reason = None
+                last_terminated_exit_code = None
+                for cs in container_statuses:
+                    state = cs.get("state", {})
+                    waiting = state.get("waiting")
+                    terminated = state.get("terminated")
+                    if waiting and container_waiting_reason is None:
+                        container_waiting_reason = waiting.get("reason")
+                    if terminated and container_terminated_reason is None:
+                        container_terminated_reason = terminated.get("reason")
+                        container_terminated_exit_code = terminated.get("exitCode")
+                    last_term = cs.get("lastState", {}).get("terminated")
+                    if last_term and last_terminated_reason is None:
+                        last_terminated_reason = last_term.get("reason")
+                        last_terminated_exit_code = last_term.get("exitCode")
+
+                # Scheduling reason when stuck Pending (e.g. Unschedulable).
+                pending_reason = None
+                if phase == "Pending":
+                    for cond in status.get("conditions", []):
+                        if (
+                            cond.get("type") == "PodScheduled"
+                            and cond.get("status") == "False"
+                        ):
+                            pending_reason = cond.get("reason")
+                            break
+
+                # Derive a single automation-friendly problem flag/reason (current state).
+                problem = False
+                problem_reason = None
+                if (
+                    container_waiting_reason
+                    and container_waiting_reason not in _BENIGN_WAITING_REASONS
+                ):
+                    problem = True
+                    problem_reason = container_waiting_reason
+                elif container_terminated_exit_code not in (None, 0):
+                    problem = True
+                    problem_reason = container_terminated_reason or "Error"
+                elif phase == "Failed":
+                    problem = True
+                    problem_reason = "Failed"
+                elif phase == "Pending" and pending_reason:
+                    problem = True
+                    problem_reason = pending_reason
+
+                parsed_pod = {
+                    "name": metadata.get("name", "Unknown"),
+                    "namespace": metadata.get("namespace", "default"),
+                    "phase": phase,
+                    "ready_containers": ready_containers,
+                    "total_containers": total_containers,
+                    "restart_count": restart_count,
+                    "node_name": node_name,
+                    "pod_ip": pod_ip,
+                    "creation_timestamp": creation_timestamp,
+                    "labels": labels,
+                    "owner_kind": owner_kind,
+                    "owner_name": owner_name,
+                    "uid": metadata.get("uid", ""),
+                    "container_waiting_reason": container_waiting_reason,
+                    "container_terminated_reason": container_terminated_reason,
+                    "container_terminated_exit_code": container_terminated_exit_code,
+                    "last_terminated_reason": last_terminated_reason,
+                    "last_terminated_exit_code": last_terminated_exit_code,
+                    "pending_reason": pending_reason,
+                    "problem": problem,
+                    "problem_reason": problem_reason,
+                }
+
+                parsed_pods.append(parsed_pod)
+
+            except Exception as ex:
+                _LOGGER.warning("Failed to parse pod data: %s", ex)
+                continue
+
+        return parsed_pods
+
+    def _parse_pod_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw pod API object into the internal representation."""
+        result = self._parse_pods_data([item])
+        return result[0] if result else None
+
+    async def get_nodes_count(self) -> int:
+        """Get the count of nodes in the cluster."""
+        try:
+            result = await self._fetch_resource_count(
+                "api/v1", "nodes", cluster_scoped=True
+            )
+            if result is not None:
+                self._log_success("get nodes count", f"retrieved {result} nodes")
+            return result
+        except Exception as ex:
+            self._log_error("get nodes count", ex)
+            raise
+
+    async def get_nodes(self) -> list[dict[str, Any]]:
+        """Get detailed information about all nodes in the cluster."""
+        try:
+            _LOGGER.debug("Starting get_nodes() call")
+            # Use aiohttp as primary since it works better with SSL configuration
+            result = await self._get_nodes_aiohttp()
+            _LOGGER.debug("get_nodes() successful: retrieved %d nodes", len(result))
+            self._log_success("get nodes", f"retrieved {len(result)} nodes")
+            return result
+        except Exception as ex:
+            _LOGGER.exception("get_nodes() failed with exception: %s", ex)
+            self._log_error("get nodes", ex)
+            raise
+
+    async def _get_nodes_aiohttp(self) -> list[dict[str, Any]]:
+        """Get detailed nodes information using aiohttp."""
+        return await self._fetch_resource_list(
+            "api/v1", "nodes", self._parse_node_item, cluster_scoped=True
+        )
+
+    def _parse_memory(self, memory_str: str, output_type: str = "MiB") -> float:
+        """Parse Kubernetes memory string to specified unit (KiB, MiB, or GiB)."""
+        return parse_memory_quantity(memory_str, output_type)
+
+    def _parse_cpu(self, cpu_str: str, output_type: str = "cores") -> float:
+        """Parse Kubernetes CPU string to specified unit (n, u, m, or cores)."""
+        return parse_cpu_quantity(cpu_str, output_type)
+
+    def _parse_node_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw node API object into the internal representation."""
+        try:
+            metadata = item.get("metadata", {})
+            status = item.get("status", {})
+            spec = item.get("spec", {})
+
+            node_name = metadata.get("name", "unknown")
+            conditions = status.get("conditions", [])
+            ready_condition: dict[str, Any] = next(
+                (c for c in conditions if c.get("type") == "Ready"), {}
+            )
+            node_status = (
+                "Ready" if ready_condition.get("status") == "True" else "NotReady"
+            )
+
+            pressure_map = {
+                c.get("type"): c.get("status") == "True"
+                for c in conditions
+                if c.get("type")
+                in (
+                    "MemoryPressure",
+                    "DiskPressure",
+                    "PIDPressure",
+                    "NetworkUnavailable",
+                )
+            }
+
+            addresses = status.get("addresses", [])
+            internal_ip = next(
+                (a["address"] for a in addresses if a.get("type") == "InternalIP"),
+                "N/A",
+            )
+            external_ip = next(
+                (a["address"] for a in addresses if a.get("type") == "ExternalIP"),
+                "N/A",
+            )
+
+            capacity = status.get("capacity", {})
+            allocatable = status.get("allocatable", {})
+            node_info = status.get("nodeInfo", {})
+
+            return {
+                "name": node_name,
+                "status": node_status,
+                "internal_ip": internal_ip,
+                "external_ip": external_ip,
+                "memory_capacity_gib": self._parse_memory(
+                    capacity.get("memory", "0Ki"), "GiB"
+                ),
+                "memory_allocatable_gib": self._parse_memory(
+                    allocatable.get("memory", "0Ki"), "GiB"
+                ),
+                "cpu_cores": self._parse_cpu(capacity.get("cpu", "0"), "cores"),
+                "os_image": node_info.get("osImage", "N/A"),
+                "kernel_version": node_info.get("kernelVersion", "N/A"),
+                "container_runtime": node_info.get("containerRuntimeVersion", "N/A"),
+                "kubelet_version": node_info.get("kubeletVersion", "N/A"),
+                "schedulable": not spec.get("unschedulable", False),
+                "creation_timestamp": metadata.get("creationTimestamp", "N/A"),
+                "memory_pressure": pressure_map.get("MemoryPressure", False),
+                "disk_pressure": pressure_map.get("DiskPressure", False),
+                "pid_pressure": pressure_map.get("PIDPressure", False),
+                "network_unavailable": pressure_map.get("NetworkUnavailable", False),
+            }
+        except Exception as ex:
+            _LOGGER.warning("Failed to parse node item: %s", ex)
+            return None
+
+    def _parse_replica_workload_item(
+        self, item: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Parse a single raw replica-based workload (Deployment/StatefulSet) API object."""
+        try:
+            return {
+                "name": item["metadata"]["name"],
+                "namespace": item["metadata"]["namespace"],
+                "replicas": item["spec"].get("replicas", 0),
+                "available_replicas": item["status"].get("availableReplicas", 0),
+                "ready_replicas": item["status"].get("readyReplicas", 0),
+                "is_running": item["status"].get("availableReplicas", 0) > 0,
+                "selector": item.get("spec", {})
+                .get("selector", {})
+                .get("matchLabels", {}),
+            }
+        except Exception as ex:
+            _LOGGER.warning("Failed to parse replica workload item: %s", ex)
+            return None
+
+    def _parse_deployment_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw deployment API object into the internal representation."""
+        return self._parse_replica_workload_item(item)
+
+    def _parse_statefulset_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw StatefulSet API object into the internal representation."""
+        return self._parse_replica_workload_item(item)
+
+    def _parse_daemonset_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw DaemonSet API object into the internal representation."""
+        try:
+            return {
+                "name": item["metadata"]["name"],
+                "namespace": item["metadata"]["namespace"],
+                "desired_number_scheduled": item["status"].get(
+                    "desiredNumberScheduled", 0
+                ),
+                "current_number_scheduled": item["status"].get(
+                    "currentNumberScheduled", 0
+                ),
+                "number_ready": item["status"].get("numberReady", 0),
+                "number_available": item["status"].get("numberAvailable", 0),
+                "is_running": item["status"].get("numberReady", 0) > 0,
+                "selector": item.get("spec", {})
+                .get("selector", {})
+                .get("matchLabels", {}),
+            }
+        except Exception as ex:
+            _LOGGER.warning("Failed to parse daemonset item: %s", ex)
+            return None
+
+    def _parse_ingress_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw Ingress API object into the internal representation."""
+        try:
+            metadata = item["metadata"]
+            spec = item.get("spec", {})
+
+            tls_hosts: list[str] = []
+            has_default_tls = False
+            for tls in spec.get("tls") or []:
+                hosts = tls.get("hosts") or []
+                if hosts:
+                    tls_hosts.extend(hosts)
+                else:
+                    # A TLS block without hosts is the default cert for
+                    # this Ingress — it covers every rule host.
+                    has_default_tls = True
+
+            rules: list[dict[str, Any]] = []
+            urls: list[str] = []
+            for rule in spec.get("rules") or []:
+                host = rule.get("host", "")
+                for path_item in (rule.get("http") or {}).get("paths") or []:
+                    path = path_item.get("path") or "/"
+                    service = path_item.get("backend", {}).get("service", {})
+                    port = service.get("port", {})
+                    rules.append(
+                        {
+                            "host": host,
+                            "path": path,
+                            "service_name": service.get("name", ""),
+                            "service_port": port.get("number")
+                            or port.get("name")
+                            or "",
+                        }
+                    )
+                    if host and "*" not in host:
+                        # A TLS block covers the host on exact match or via a
+                        # wildcard cert for the host's parent domain.
+                        wildcard = f"*.{host.split('.', 1)[-1]}"
+                        scheme = (
+                            "https"
+                            if host in tls_hosts
+                            or wildcard in tls_hosts
+                            or has_default_tls
+                            else "http"
+                        )
+                        urls.append(f"{scheme}://{host}{path}")
+
+            load_balancer = ""
+            for lb in (
+                item.get("status", {}).get("loadBalancer", {}).get("ingress") or []
+            ):
+                load_balancer = lb.get("ip") or lb.get("hostname") or ""
+                if load_balancer:
+                    break
+
+            return {
+                "name": metadata["name"],
+                "namespace": metadata["namespace"],
+                "ingress_class": spec.get("ingressClassName", ""),
+                "rules": rules,
+                "tls_hosts": tls_hosts,
+                "urls": urls,
+                "load_balancer": load_balancer,
+                "creation_timestamp": metadata.get("creationTimestamp", ""),
+            }
+        except Exception as ex:
+            _LOGGER.warning("Failed to parse ingress item: %s", ex)
+            return None
+
+    def _parse_service_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse a single raw Service API object into the internal representation."""
+        try:
+            metadata = item["metadata"]
+            spec = item.get("spec", {})
+            service_type = spec.get("type") or "ClusterIP"
+
+            external_ips: list[str] = []
+            if service_type == "ExternalName":
+                if spec.get("externalName"):
+                    external_ips.append(spec["externalName"])
+            else:
+                lb_ingress = (
+                    item.get("status", {}).get("loadBalancer", {}).get("ingress") or []
+                )
+                candidates = [lb.get("ip") or lb.get("hostname") for lb in lb_ingress]
+                candidates.extend(spec.get("externalIPs") or [])
+                for addr in candidates:
+                    if addr and addr not in external_ips:
+                        external_ips.append(addr)
+
+            ports = [
+                {
+                    "name": p.get("name"),
+                    "port": p.get("port"),
+                    "target_port": p.get("targetPort"),
+                    "node_port": p.get("nodePort"),
+                    "protocol": p.get("protocol") or "TCP",
+                }
+                for p in spec.get("ports") or []
+            ]
+
+            # Heuristic links for externally reachable addresses: 443 -> https,
+            # 80 -> http, anything else http://host:port. ExternalName targets
+            # are in-cluster DNS aliases and get none.
+            urls: list[str] = []
+            if service_type != "ExternalName":
+                for addr in external_ips:
+                    host = normalize_host(addr)
+                    for p in ports:
+                        if p["protocol"] != "TCP":
+                            continue
+                        if p["port"] == 443:
+                            urls.append(f"https://{host}")
+                        elif p["port"] == 80:
+                            urls.append(f"http://{host}")
+                        else:
+                            urls.append(f"http://{host}:{p['port']}")
+
+            return {
+                "name": metadata["name"],
+                "namespace": metadata["namespace"],
+                "type": service_type,
+                "cluster_ip": spec.get("clusterIP", ""),
+                "external_ips": external_ips,
+                "ports": ports,
+                "urls": urls,
+                "creation_timestamp": metadata.get("creationTimestamp", ""),
+            }
+        except Exception as ex:
+            _LOGGER.warning("Failed to parse service item: %s", ex)
+            return None
+
+    async def _fetch_resource_items(
+        self,
+        api_path: str,
+        resource_name: str,
+        *,
+        cluster_scoped: bool = False,
+        label: str = "request",
+    ) -> list[dict[str, Any]]:
+        """Fetch the raw ``items`` of a Kubernetes resource list.
+
+        If cluster_scoped or monitor_all_namespaces: single GET to the cluster-wide URL.
+        Otherwise: loop over configured namespaces. Raises KubernetesApiError on
+        any non-200 response; transport errors propagate unchanged.
+        """
+        base = f"https://{self.host}:{self.port}/{api_path}"
+        if cluster_scoped or self.monitor_all_namespaces:
+            targets: list[tuple[str | None, str]] = [(None, f"{base}/{resource_name}")]
+        else:
+            targets = [
+                (ns, f"{base}/namespaces/{ns}/{resource_name}")
+                for ns in self.namespaces
+            ]
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+        }
+        timeout = aiohttp.ClientTimeout(total=10)
+        items: list[dict[str, Any]] = []
+
+        async with aiohttp.ClientSession() as session:
+            for namespace, url in targets:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=timeout,
+                ) as response:
+                    if response.status != 200:
+                        scope = (
+                            f" for namespace {namespace}"
+                            if namespace is not None
+                            else ""
+                        )
+                        raise KubernetesApiError(
+                            f"{resource_name} {label} failed{scope} "
+                            f"with status {response.status}"
+                        )
+                    data = await response.json()
+                    items.extend(data.get("items", []))
+        return items
+
+    async def _fetch_resource_list(
+        self,
+        api_path: str,
+        resource_name: str,
+        parse_fn: Callable[[dict[str, Any]], dict[str, Any] | None],
+        *,
+        cluster_scoped: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Fetch and parse a Kubernetes resource list, dropping items parse_fn rejects."""
+        items = await self._fetch_resource_items(
+            api_path, resource_name, cluster_scoped=cluster_scoped
+        )
+        return [
+            parsed
+            for parsed in (parse_fn(item) for item in items)
+            if parsed is not None
+        ]
+
+    async def _fetch_resource_count(
+        self,
+        api_path: str,
+        resource_name: str,
+        *,
+        cluster_scoped: bool = False,
+    ) -> int:
+        """Count Kubernetes resources across the configured scope."""
+        return len(
+            await self._fetch_resource_items(
+                api_path,
+                resource_name,
+                cluster_scoped=cluster_scoped,
+                label="count request",
+            )
+        )
+
+    async def get_deployments_count(self) -> int:
+        """Get the count of deployments in the namespace(s)."""
+        try:
+            result = await self._fetch_resource_count("apis/apps/v1", "deployments")
+            if result is not None:
+                self._log_success(
+                    "get deployments count", f"retrieved {result} deployments"
+                )
+            return result
+        except Exception as ex:
+            self._log_error("get deployments count", ex)
+            raise
+
+    async def get_deployments(
+        self, include_metrics: bool = True
+    ) -> list[dict[str, Any]]:
+        """Get all deployments in the namespace(s) with their details."""
+        try:
+            result = await self._fetch_resource_list(
+                "apis/apps/v1", "deployments", self._parse_replica_workload_item
+            )
+            if result:
+                if include_metrics:
+                    await self._enrich_workloads_with_metrics(result, "deployment")
+                self._log_success(
+                    "get deployments", f"retrieved {len(result)} deployments"
+                )
+            return result
+        except Exception as ex:
+            self._log_error("get deployments", ex)
+            raise
+
+    async def scale_deployment(
+        self, deployment_name: str, replicas: int, namespace: str | None = None
+    ) -> bool:
+        """Scale a deployment to the specified number of replicas."""
+        return await self._scale_workload(
+            "deployments",
+            deployment_name,
+            replicas,
+            namespace,
+            read_fn=self.apps_v1.read_namespaced_deployment,
+            replace_fn=self.apps_v1.replace_namespaced_deployment,
+        )
+
+    async def _scale_workload(
+        self,
+        resource_type: str,
+        name: str,
+        replicas: int,
+        namespace: str | None,
+        *,
+        read_fn: Callable,
+        replace_fn: Callable,
+    ) -> bool:
+        """Scale a replica workload: aiohttp PATCH first, official client fallback."""
+        kind = resource_type.rstrip("s")
+        result = await self._scale_workload_aiohttp(
+            resource_type, name, replicas, namespace
+        )
+        if result:
+            _LOGGER.info(
+                "Successfully scaled %s %s to %d replicas", kind, name, replicas
+            )
+            return result
+
+        _LOGGER.debug(
+            "aiohttp failed, trying official Kubernetes client for %s scaling", kind
+        )
+        result = await self._scale_workload_kubernetes(
+            kind, name, replicas, namespace, read_fn, replace_fn
+        )
+        if result:
+            _LOGGER.info(
+                "Successfully scaled %s %s to %d replicas using official client",
+                kind,
+                name,
+                replicas,
+            )
+        return result
+
+    async def _scale_workload_aiohttp(
+        self,
+        resource_type: str,
+        name: str,
+        replicas: int,
+        namespace: str | None = None,
+    ) -> bool:
+        """Scale a workload by patching its /scale subresource via aiohttp."""
+        kind = resource_type.rstrip("s")
+        try:
+            target_namespace = namespace or self.namespace
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/strategic-merge-patch+json",
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(
+                    f"https://{self.host}:{self.port}/apis/apps/v1/namespaces/{target_namespace}/{resource_type}/{name}/scale",
+                    headers=headers,
+                    json={"spec": {"replicas": replicas}},
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status in [200, 201]:
+                        _LOGGER.info(
+                            "Successfully scaled %s %s to %d replicas using aiohttp",
+                            kind,
+                            name,
+                            replicas,
+                        )
+                        return True
+                    response_text = await response.text()
+                    _LOGGER.error(
+                        "aiohttp scale %s failed with status %s: %s",
+                        kind,
+                        response.status,
+                        response_text,
+                    )
+                    return False
+        except Exception as ex:
+            self._log_error(
+                f"aiohttp scale {kind} {name}", ex, f"target_replicas={replicas}"
+            )
+            return False
+
+    async def _scale_workload_kubernetes(
+        self,
+        kind: str,
+        name: str,
+        replicas: int,
+        namespace: str | None,
+        read_fn: Callable,
+        replace_fn: Callable,
+    ) -> bool:
+        """Scale a workload with the official client (read, set replicas, replace)."""
+        try:
+            target_namespace = namespace or self.namespace
+            loop = asyncio.get_running_loop()
+            workload = await loop.run_in_executor(None, read_fn, name, target_namespace)
+            workload.spec.replicas = replicas
+            await loop.run_in_executor(
+                None, replace_fn, name, target_namespace, workload
+            )
+            _LOGGER.info(
+                "Successfully scaled %s %s to %d replicas using official client",
+                kind,
+                name,
+                replicas,
+            )
+            return True
+        except Exception as ex:
+            self._log_error(
+                f"official client scale {kind} {name}",
+                ex,
+                f"target_replicas={replicas}",
+            )
+            return False
+
+    async def stop_deployment(
+        self, deployment_name: str, namespace: str | None = None
+    ) -> bool:
+        """Stop a deployment by scaling it to 0 replicas."""
+        return await self.scale_deployment(deployment_name, 0, namespace)
+
+    async def start_deployment(
+        self, deployment_name: str, replicas: int = 1, namespace: str | None = None
+    ) -> bool:
+        """Start a deployment by scaling it to the specified number of replicas."""
+        return await self.scale_deployment(deployment_name, replicas, namespace)
+
+    # StatefulSet methods
+    async def get_statefulsets_count(self) -> int:
+        """Get the count of StatefulSets in the namespace(s)."""
+        try:
+            result = await self._fetch_resource_count("apis/apps/v1", "statefulsets")
+            if result is not None:
+                self._log_success("get statefulsets count", f"count: {result}")
+            return result or 0
+        except Exception as ex:
+            self._log_error("get statefulsets count", ex)
+            raise
+
+    async def get_statefulsets(
+        self, include_metrics: bool = True
+    ) -> list[dict[str, Any]]:
+        """Get all StatefulSets in the namespace(s) with their details."""
+        try:
+            result = await self._fetch_resource_list(
+                "apis/apps/v1", "statefulsets", self._parse_replica_workload_item
+            )
+            if result:
+                if include_metrics:
+                    await self._enrich_workloads_with_metrics(result, "statefulset")
+                self._log_success(
+                    "get statefulsets", f"retrieved {len(result)} statefulsets"
+                )
+            return result
+        except Exception as ex:
+            self._log_error("get statefulsets", ex)
+            raise
+
+    async def scale_statefulset(
+        self, statefulset_name: str, replicas: int, namespace: str | None = None
+    ) -> bool:
+        """Scale a statefulset to the specified number of replicas."""
+        return await self._scale_workload(
+            "statefulsets",
+            statefulset_name,
+            replicas,
+            namespace,
+            read_fn=self.apps_v1.read_namespaced_stateful_set,
+            replace_fn=self.apps_v1.replace_namespaced_stateful_set,
+        )
+
+    async def stop_statefulset(
+        self, statefulset_name: str, namespace: str | None = None
+    ) -> bool:
+        """Stop a StatefulSet by scaling it to 0 replicas."""
+        return await self.scale_statefulset(statefulset_name, 0, namespace)
+
+    async def start_statefulset(
+        self, statefulset_name: str, replicas: int = 1, namespace: str | None = None
+    ) -> bool:
+        """Start a StatefulSet by scaling it to the specified number of replicas."""
+        return await self.scale_statefulset(statefulset_name, replicas, namespace)
+
+    # Pod methods
+    async def delete_pod(self, pod_name: str, namespace: str | None = None) -> bool:
+        """Delete a pod by name."""
+        result = await self._delete_pod_aiohttp(pod_name, namespace)
+        if result:
+            _LOGGER.info(
+                "Successfully deleted pod %s in namespace %s",
+                pod_name,
+                namespace or self.namespace,
+            )
+            return result
+
+        _LOGGER.debug(
+            "aiohttp failed, trying official Kubernetes client for pod deletion"
+        )
+        result = await self._delete_pod_kubernetes(pod_name, namespace)
+        if result:
+            _LOGGER.info(
+                "Successfully deleted pod %s in namespace %s using official client",
+                pod_name,
+                namespace or self.namespace,
+            )
+        return result
+
+    async def _delete_pod_aiohttp(
+        self, pod_name: str, namespace: str | None = None
+    ) -> bool:
+        """Delete a pod using aiohttp."""
+        try:
+            target_namespace = namespace or self.namespace
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(
+                    f"https://{self.host}:{self.port}/api/v1/namespaces/{target_namespace}/pods/{pod_name}",
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status in [200, 202]:
+                        return True
+                    else:
+                        response_text = await response.text()
+                        _LOGGER.error(
+                            "aiohttp delete pod failed with status %s: %s",
+                            response.status,
+                            response_text,
+                        )
+                        return False
+        except Exception as ex:
+            self._log_error(f"aiohttp delete pod {pod_name}", ex)
+            return False
+
+    async def _delete_pod_kubernetes(
+        self, pod_name: str, namespace: str | None = None
+    ) -> bool:
+        """Delete a pod using the official Kubernetes client."""
+        try:
+            target_namespace = namespace or self.namespace
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self.core_v1.delete_namespaced_pod,
+                pod_name,
+                target_namespace,
+            )
+            return True
+        except Exception as ex:
+            self._log_error(f"official client delete pod {pod_name}", ex)
+            return False
+
+    async def delete_job(self, job_name: str, namespace: str | None = None) -> bool:
+        """Delete a job by name (cascade-deletes its pods via Background propagation)."""
+        result = await self._delete_job_aiohttp(job_name, namespace)
+        if result:
+            _LOGGER.info(
+                "Successfully deleted job %s in namespace %s",
+                job_name,
+                namespace or self.namespace,
+            )
+            return result
+        _LOGGER.debug(
+            "aiohttp failed, trying official Kubernetes client for job deletion"
+        )
+        result = await self._delete_job_kubernetes(job_name, namespace)
+        if result:
+            _LOGGER.info(
+                "Successfully deleted job %s in namespace %s using official client",
+                job_name,
+                namespace or self.namespace,
+            )
+        return result
+
+    async def _delete_job_aiohttp(
+        self, job_name: str, namespace: str | None = None
+    ) -> bool:
+        """Delete a job using aiohttp (Background propagation cascades to its pods)."""
+        try:
+            target_namespace = namespace or self.namespace
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+            }
+            url = (
+                f"https://{self.host}:{self.port}/apis/batch/v1/namespaces/"
+                f"{target_namespace}/jobs/{job_name}?propagationPolicy=Background"
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(
+                    url,
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status in [200, 202]:
+                        return True
+                    response_text = await response.text()
+                    _LOGGER.error(
+                        "aiohttp delete job failed with status %s: %s",
+                        response.status,
+                        response_text,
+                    )
+                    return False
+        except Exception as ex:
+            self._log_error(f"aiohttp delete job {job_name}", ex)
+            return False
+
+    async def _delete_job_kubernetes(
+        self, job_name: str, namespace: str | None = None
+    ) -> bool:
+        """Delete a job using the official Kubernetes client (Background cascade)."""
+        try:
+            target_namespace = namespace or self.namespace
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    self.batch_v1.delete_namespaced_job,
+                    job_name,
+                    target_namespace,
+                    propagation_policy="Background",
+                ),
+            )
+            return True
+        except Exception as ex:
+            self._log_error(f"official client delete job {job_name}", ex)
+            return False
+
+    # Rollout restart methods
+    async def rollout_restart_deployment(
+        self, name: str, namespace: str | None = None
+    ) -> bool:
+        """Perform a rollout restart of a deployment."""
+        return await self._rollout_restart(
+            resource_type="deployments",
+            name=name,
+            namespace=namespace,
+            patch_fn=self.apps_v1.patch_namespaced_deployment,
+        )
+
+    async def rollout_restart_statefulset(
+        self, name: str, namespace: str | None = None
+    ) -> bool:
+        """Perform a rollout restart of a statefulset."""
+        return await self._rollout_restart(
+            resource_type="statefulsets",
+            name=name,
+            namespace=namespace,
+            patch_fn=self.apps_v1.patch_namespaced_stateful_set,
+        )
+
+    async def rollout_restart_daemonset(
+        self, name: str, namespace: str | None = None
+    ) -> bool:
+        """Perform a rollout restart of a daemonset."""
+        return await self._rollout_restart(
+            resource_type="daemonsets",
+            name=name,
+            namespace=namespace,
+            patch_fn=self.apps_v1.patch_namespaced_daemon_set,
+        )
+
+    async def _rollout_restart(
+        self,
+        resource_type: str,
+        name: str,
+        namespace: str | None,
+        patch_fn: Callable,
+    ) -> bool:
+        """Perform a rollout restart by patching the restart annotation."""
+        result = await self._rollout_restart_aiohttp(resource_type, name, namespace)
+        if result:
+            _LOGGER.info(
+                "Successfully triggered rollout restart for %s %s in namespace %s",
+                resource_type.rstrip("s"),
+                name,
+                namespace or self.namespace,
+            )
+            return result
+
+        _LOGGER.debug(
+            "aiohttp failed, trying official Kubernetes client for rollout restart"
+        )
+        result = await self._rollout_restart_kubernetes(name, namespace, patch_fn)
+        if result:
+            _LOGGER.info(
+                "Successfully triggered rollout restart for %s %s in namespace %s using official client",
+                resource_type.rstrip("s"),
+                name,
+                namespace or self.namespace,
+            )
+        return result
+
+    async def _rollout_restart_aiohttp(
+        self, resource_type: str, name: str, namespace: str | None = None
+    ) -> bool:
+        """Perform rollout restart using aiohttp PATCH."""
+        try:
+            target_namespace = namespace or self.namespace
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/strategic-merge-patch+json",
+            }
+
+            restart_at = datetime.now(UTC).isoformat()
+            patch_data = {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "kubectl.kubernetes.io/restartedAt": restart_at
+                            }
+                        }
+                    }
+                }
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(
+                    f"https://{self.host}:{self.port}/apis/apps/v1/namespaces/{target_namespace}/{resource_type}/{name}",
+                    headers=headers,
+                    json=patch_data,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status in [200, 201]:
+                        return True
+                    else:
+                        response_text = await response.text()
+                        _LOGGER.error(
+                            "aiohttp rollout restart failed with status %s: %s",
+                            response.status,
+                            response_text,
+                        )
+                        return False
+        except Exception as ex:
+            self._log_error(f"aiohttp rollout restart {resource_type} {name}", ex)
+            return False
+
+    async def _rollout_restart_kubernetes(
+        self,
+        name: str,
+        namespace: str | None,
+        patch_fn: Callable,
+    ) -> bool:
+        """Perform rollout restart using the official Kubernetes client."""
+        try:
+            target_namespace = namespace or self.namespace
+            loop = asyncio.get_running_loop()
+
+            restart_at = datetime.now(UTC).isoformat()
+            patch_body = {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "kubectl.kubernetes.io/restartedAt": restart_at
+                            }
+                        }
+                    }
+                }
+            }
+
+            await loop.run_in_executor(
+                None, patch_fn, name, target_namespace, patch_body
+            )
+            return True
+        except Exception as ex:
+            self._log_error(f"official client rollout restart {name}", ex)
+            return False
+
+    async def cordon_node(self, node_name: str) -> bool:
+        """Cordon a node (mark it unschedulable)."""
+        return await self._set_node_schedulable(node_name, schedulable=False)
+
+    async def uncordon_node(self, node_name: str) -> bool:
+        """Uncordon a node (mark it schedulable again)."""
+        return await self._set_node_schedulable(node_name, schedulable=True)
+
+    async def _set_node_schedulable(self, node_name: str, schedulable: bool) -> bool:
+        """Set a node's schedulable state by patching spec.unschedulable."""
+        action = "uncordon" if schedulable else "cordon"
+        result = await self._set_node_schedulable_aiohttp(node_name, schedulable)
+        if result:
+            _LOGGER.debug("Successfully %sed node %s", action, node_name)
+            return result
+
+        _LOGGER.debug(
+            "aiohttp failed, trying official Kubernetes client to %s node", action
+        )
+        result = await self._set_node_schedulable_kubernetes(node_name, schedulable)
+        if result:
+            _LOGGER.debug(
+                "Successfully %sed node %s using official client", action, node_name
+            )
+        return result
+
+    async def _set_node_schedulable_aiohttp(
+        self, node_name: str, schedulable: bool
+    ) -> bool:
+        """Set a node's schedulable state using aiohttp PATCH."""
+        action = "uncordon" if schedulable else "cordon"
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/strategic-merge-patch+json",
+            }
+
+            patch_data = {"spec": {"unschedulable": not schedulable}}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(
+                    f"https://{self.host}:{self.port}/api/v1/nodes/{node_name}",
+                    headers=headers,
+                    json=patch_data,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status in [200, 201]:
+                        return True
+                    else:
+                        response_text = await response.text()
+                        _LOGGER.error(
+                            "aiohttp %s node failed with status %s: %s",
+                            action,
+                            response.status,
+                            response_text,
+                        )
+                        return False
+        except Exception as ex:
+            self._log_error(f"aiohttp {action} node {node_name}", ex)
+            return False
+
+    async def _set_node_schedulable_kubernetes(
+        self, node_name: str, schedulable: bool
+    ) -> bool:
+        """Set a node's schedulable state using the official Kubernetes client."""
+        action = "uncordon" if schedulable else "cordon"
+        try:
+            loop = asyncio.get_running_loop()
+            patch_body = {"spec": {"unschedulable": not schedulable}}
+            await loop.run_in_executor(
+                None, self.core_v1.patch_node, node_name, patch_body
+            )
+            return True
+        except Exception as ex:
+            self._log_error(f"official client {action} node {node_name}", ex)
+            return False
+
+    async def get_pod_metrics(self) -> dict[str, dict[str, float]]:
+        """Get pod metrics (CPU and memory usage)."""
+        # Metrics API is usually accessed via /apis/metrics.k8s.io/v1beta1/pods
+        return await self._get_pod_metrics_aiohttp()
+
+    async def _get_pod_metrics_aiohttp(self) -> dict[str, dict[str, float]]:
+        """Get pod metrics using aiohttp."""
+        try:
+            headers = {"Authorization": f"Bearer {self.api_token}"}
+            if self.monitor_all_namespaces:
+                url = (
+                    f"https://{self.host}:{self.port}/apis/metrics.k8s.io/v1beta1/pods"
+                )
+            else:
+                url = f"https://{self.host}:{self.port}/apis/metrics.k8s.io/v1beta1/namespaces/{self.namespace}/pods"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        metrics: dict[str, dict[str, float]] = {}
+                        for item in data.get("items", []):
+                            metadata = item.get("metadata", {})
+                            name = metadata.get("name")
+                            namespace = metadata.get("namespace")
+                            containers = item.get("containers", [])
+
+                            cpu_usage = 0.0
+                            memory_usage = 0.0
+
+                            for container in containers:
+                                usage = container.get("usage", {})
+                                cpu_str = usage.get("cpu", "0")
+                                memory_str = usage.get("memory", "0")
+
+                                # Debug log for first few items to verify parsing
+                                if len(metrics) < 5:
+                                    _LOGGER.debug(
+                                        "Parsing metrics for %s/%s: cpu=%s, memory=%s",
+                                        namespace,
+                                        name,
+                                        cpu_str,
+                                        memory_str,
+                                    )
+
+                                cpu_usage += self._parse_cpu(cpu_str, "m")
+                                memory_usage += self._parse_memory(memory_str, "MiB")
+
+                            # Key by namespace/name to be unique across namespaces
+                            key = f"{namespace}/{name}"
+                            metrics[key] = {"cpu": cpu_usage, "memory": memory_usage}
+                        _LOGGER.debug(
+                            "Successfully fetched metrics for %d pods", len(metrics)
+                        )
+                        return metrics
+                    elif response.status == 403:
+                        _LOGGER.warning(
+                            "Failed to fetch pod metrics: 403 Forbidden. "
+                            "The service account does not have permission to access the metrics API. "
+                            "To enable CPU and Memory usage metrics, add the following to your ClusterRole: "
+                            "apiGroups: ['metrics.k8s.io'], resources: ['pods', 'nodes'], verbs: ['get', 'list']"
+                        )
+                        return {}
+                    else:
+                        _LOGGER.warning(
+                            "Failed to fetch pod metrics: %s. Metrics API might not be available.",
+                            response.status,
+                        )
+                        return {}
+        except Exception as ex:
+            _LOGGER.warning("Exception in _get_pod_metrics_aiohttp: %s", ex)
+            return {}
+
+    async def get_node_metrics(self) -> dict[str, dict[str, float]]:
+        """Get node metrics (CPU and memory usage) from the Metrics API."""
+        return await self._get_node_metrics_aiohttp()
+
+    async def _get_node_metrics_aiohttp(self) -> dict[str, dict[str, float]]:
+        """Get node metrics using aiohttp."""
+        try:
+            headers = {"Authorization": f"Bearer {self.api_token}"}
+            url = f"https://{self.host}:{self.port}/apis/metrics.k8s.io/v1beta1/nodes"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        metrics: dict[str, dict[str, float]] = {}
+                        for item in data.get("items", []):
+                            name = item.get("metadata", {}).get("name")
+                            if not name:
+                                continue
+                            usage = item.get("usage", {})
+                            cpu_str = usage.get("cpu", "0")
+                            memory_str = usage.get("memory", "0")
+
+                            metrics[name] = {
+                                "cpu": self._parse_cpu(cpu_str, "m"),
+                                "memory": self._parse_memory(memory_str, "MiB"),
+                            }
+                        _LOGGER.debug(
+                            "Successfully fetched metrics for %d nodes", len(metrics)
+                        )
+                        return metrics
+                    elif response.status == 403:
+                        _LOGGER.warning(
+                            "Failed to fetch node metrics: 403 Forbidden. "
+                            "The service account does not have permission to access the metrics API. "
+                            "To enable CPU and Memory usage metrics, add the following to your ClusterRole: "
+                            "apiGroups: ['metrics.k8s.io'], resources: ['pods', 'nodes'], verbs: ['get', 'list']"
+                        )
+                        return {}
+                    else:
+                        _LOGGER.warning(
+                            "Failed to fetch node metrics: %s. Metrics API might not be available.",
+                            response.status,
+                        )
+                        return {}
+        except Exception as ex:
+            _LOGGER.warning("Exception in _get_node_metrics_aiohttp: %s", ex)
+            return {}
+
+    def _pod_matches_selector(
+        self, pod_labels: dict[str, Any], selector: dict[str, Any]
+    ) -> bool:
+        """Check if a pod matches a selector."""
+        if not selector:
+            return False
+        return all(pod_labels.get(key) == value for key, value in selector.items())
+
+    def _calculate_resource_usage(
+        self,
+        workload: dict[str, Any],
+        pods: list[dict[str, Any]],
+        metrics: dict[str, dict[str, float]],
+    ) -> tuple[float, float]:
+        """Calculate CPU and memory usage for a workload from its pods."""
+        selector = workload.get("selector", {})
+        namespace = workload.get("namespace")
+        workload_name = workload.get("name", "unknown")
+
+        cpu_usage = 0.0
+        memory_usage = 0.0
+        matched_pods = 0
+
+        for pod in pods:
+            pod_name = pod.get("name")
+            pod_ns = pod.get("namespace")
+            pod_labels = pod.get("labels", {})
+
+            if pod_ns == namespace and self._pod_matches_selector(pod_labels, selector):
+                matched_pods += 1
+                pod_metric_key = f"{namespace}/{pod_name}"
+                pod_metric = metrics.get(pod_metric_key)
+                if pod_metric:
+                    cpu_usage += pod_metric.get("cpu", 0.0)
+                    memory_usage += pod_metric.get("memory", 0.0)
+                else:
+                    _LOGGER.debug(
+                        "No metrics found for pod %s/%s (key: %s) belonging to workload %s/%s",
+                        pod_ns,
+                        pod_name,
+                        pod_metric_key,
+                        namespace,
+                        workload_name,
+                    )
+
+        if matched_pods == 0:
+            _LOGGER.debug(
+                "No pods matched selector %s for workload %s/%s",
+                selector,
+                namespace,
+                workload_name,
+            )
+
+        return cpu_usage, memory_usage
+
+    async def _enrich_workloads_with_metrics(
+        self, workloads: list[dict[str, Any]], workload_type_label: str
+    ) -> None:
+        """Enrich workloads (deployments/statefulsets) with CPU and memory usage metrics."""
+        # Initialize all workloads with 0.0 values first
+        for workload in workloads:
+            workload.setdefault("cpu_usage", 0.0)
+            workload.setdefault("memory_usage", 0.0)
+
+        try:
+            # Get pods based on namespace monitoring configuration
+            if self.monitor_all_namespaces:
+                pods = await self._get_pods_all_namespaces_aiohttp()
+            else:
+                pods = await self._get_pods_aiohttp()
+            metrics = await self._get_pod_metrics_aiohttp()
+
+            if not pods:
+                _LOGGER.debug(
+                    "No pods found for %s metrics enrichment", workload_type_label
+                )
+                return
+            if not metrics:
+                _LOGGER.debug(
+                    "No pod metrics available for %s metrics enrichment",
+                    workload_type_label,
+                )
+                return
+
+            _LOGGER.debug(
+                "Enriching %d %ss with metrics from %d pods and %d metric entries",
+                len(workloads),
+                workload_type_label,
+                len(pods),
+                len(metrics),
+            )
+
+            for workload in workloads:
+                cpu_usage, memory_usage = self._calculate_resource_usage(
+                    workload, pods, metrics
+                )
+                workload["cpu_usage"] = cpu_usage
+                workload["memory_usage"] = memory_usage
+                _LOGGER.debug(
+                    "%s %s/%s: CPU=%.2f m, Memory=%.2f MiB",
+                    workload_type_label.capitalize(),
+                    workload.get("namespace", "unknown"),
+                    workload.get("name", "unknown"),
+                    cpu_usage,
+                    memory_usage,
+                )
+        except Exception as ex:
+            _LOGGER.error(
+                "Error enriching %ss with metrics: %s", workload_type_label, ex
+            )
+
+    async def is_cluster_healthy(self) -> bool:
+        """Check if the cluster is healthy."""
+        return await self._test_connection()
+
+    async def get_server_version(self) -> str | None:
+        """Get the API server's gitVersion from /version — best-effort.
+
+        Returned verbatim: managed distros append vendor suffixes
+        (``v1.36.2-eks-1552ad0``, ``v1.36.2+k3s1``) that users expect to see,
+        and the sibling ``major``/``minor`` fields are unusable for parsing
+        (EKS/GKE report ``minor: "36+"``). Readable by every authenticated
+        user via ``system:public-info-viewer``, so no RBAC rule is needed.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://{self.host}:{self.port}/version",
+                    headers={"Authorization": f"Bearer {self.api_token}"},
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status != 200:
+                        _LOGGER.debug(
+                            "Failed to fetch server version: %s", response.status
+                        )
+                        return None
+                    version = (await response.json()).get("gitVersion")
+                    return version if isinstance(version, str) else None
+        except Exception as ex:
+            _LOGGER.debug("Exception fetching server version: %s", ex)
+            return None
+
+    # DaemonSet methods
+    async def get_daemonsets_count(self) -> int:
+        """Get the count of DaemonSets in the namespace(s)."""
+        try:
+            result = await self._fetch_resource_count("apis/apps/v1", "daemonsets")
+            if result is not None:
+                self._log_success("get daemonsets count", f"count: {result}")
+            return result or 0
+        except Exception as ex:
+            self._log_error("get daemonsets count", ex)
+            raise
+
+    async def get_daemonsets(self) -> list[dict[str, Any]]:
+        """Get all DaemonSets in the namespace(s) with their details."""
+        try:
+            result = await self._fetch_resource_list(
+                "apis/apps/v1", "daemonsets", self._parse_daemonset_item
+            )
+            if result:
+                self._log_success(
+                    "get daemonsets", f"retrieved {len(result)} daemonsets"
+                )
+            return result
+        except Exception as ex:
+            self._log_error("get daemonsets", ex)
+            raise
+
+    # Ingress methods
+    async def get_ingresses_count(self) -> int:
+        """Get the count of Ingresses in the namespace(s)."""
+        try:
+            result = await self._fetch_resource_count(
+                "apis/networking.k8s.io/v1", "ingresses"
+            )
+            if result is not None:
+                self._log_success("get ingresses count", f"count: {result}")
+            return result or 0
+        except Exception as ex:
+            self._log_error("get ingresses count", ex)
+            raise
+
+    async def get_ingresses(self) -> list[dict[str, Any]]:
+        """Get all Ingresses in the namespace(s) with their details."""
+        try:
+            result = await self._fetch_resource_list(
+                "apis/networking.k8s.io/v1", "ingresses", self._parse_ingress_item
+            )
+            if result:
+                self._log_success("get ingresses", f"retrieved {len(result)} ingresses")
+            return result
+        except Exception as ex:
+            self._log_error("get ingresses", ex)
+            raise
+
+    async def get_services_count(self) -> int:
+        """Get the count of Services in the namespace(s)."""
+        try:
+            result = await self._fetch_resource_count("api/v1", "services")
+            if result is not None:
+                self._log_success("get services count", f"count: {result}")
+            return result or 0
+        except Exception as ex:
+            self._log_error("get services count", ex)
+            raise
+
+    async def get_services(self) -> list[dict[str, Any]]:
+        """Get all Services in the namespace(s) with their details."""
+        try:
+            result = await self._fetch_resource_list(
+                "api/v1", "services", self._parse_service_item
+            )
+            if result:
+                self._log_success("get services", f"retrieved {len(result)} services")
+            return result
+        except Exception as ex:
+            self._log_error("get services", ex)
+            raise
+
+    # CronJob methods
+    async def get_cronjobs_count(self) -> int:
+        """Get the count of CronJobs in the cluster."""
+        try:
+            result = await self._fetch_resource_count("apis/batch/v1", "cronjobs")
+            if result is not None:
+                self._log_success("get cronjobs count", f"count: {result}")
+            return result
+        except Exception as ex:
+            self._log_error("get_cronjobs_count", ex)
+            raise
+
+    async def get_cronjobs(self) -> list[dict[str, Any]]:
+        """Get detailed information about CronJobs in the cluster."""
+        try:
+            result = await self._fetch_resource_list(
+                "apis/batch/v1", "cronjobs", self._format_cronjob_from_dict
+            )
+            if result:
+                self._log_success("get cronjobs", f"retrieved {len(result)} cronjobs")
+            return result
+        except Exception as ex:
+            self._log_error("get_cronjobs", ex)
+            raise
+
+    async def _patch_cronjob_aiohttp(
+        self,
+        cronjob_name: str,
+        namespace: str,
+        patch_body: dict[str, Any],
+        operation: str,
+    ) -> dict[str, Any]:
+        """Apply a strategic-merge patch to a CronJob via aiohttp."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/strategic-merge-patch+json",
+            }
+            url = f"https://{self.host}:{self.port}/apis/batch/v1/namespaces/{namespace}/cronjobs/{cronjob_name}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(
+                    url,
+                    headers=headers,
+                    json=patch_body,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status == 200:
+                        _LOGGER.info(
+                            "Successfully applied %s to CronJob '%s' in namespace '%s' via aiohttp",
+                            operation,
+                            cronjob_name,
+                            namespace,
+                        )
+                        return {
+                            "success": True,
+                            "cronjob_name": cronjob_name,
+                            "namespace": namespace,
+                        }
+                    error_msg = f"Failed to {operation} CronJob '{cronjob_name}' via aiohttp: HTTP {response.status}"
+                    _LOGGER.error(error_msg)
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                        "cronjob_name": cronjob_name,
+                        "namespace": namespace,
+                    }
+        except Exception as ex:
+            error_msg = (
+                f"Failed to {operation} CronJob '{cronjob_name}' via aiohttp: {ex!s}"
+            )
+            self._log_error(f"_{operation}_cronjob_aiohttp", ex)
+            return {
+                "success": False,
+                "error": error_msg,
+                "cronjob_name": cronjob_name,
+                "namespace": namespace,
+            }
+
+    async def _trigger_cronjob_aiohttp(
+        self, cronjob_name: str, namespace: str
+    ) -> dict[str, Any]:
+        """Trigger a CronJob using aiohttp by creating a job from it."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+
+            # Step 1: Get the CronJob to extract the job template
+            cronjob_url = f"https://{self.host}:{self.port}/apis/batch/v1/namespaces/{namespace}/cronjobs/{cronjob_name}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    cronjob_url,
+                    headers=headers,
+                    ssl=await self._get_ssl_param(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status != 200:
+                        error_msg = f"Failed to get CronJob '{cronjob_name}' via aiohttp: HTTP {response.status}"
+                        _LOGGER.error(error_msg)
+                        return {
+                            "success": False,
+                            "error": error_msg,
+                            "cronjob_name": cronjob_name,
+                            "namespace": namespace,
+                        }
+
+                    cronjob_data = await response.json()
+
+                    # Step 2: Create a job from the CronJob template
+                    job_name = f"{cronjob_name}-manual-{int(time.time())}"
+
+                    # Extract the job template from the CronJob
+                    job_template = cronjob_data.get("spec", {}).get("jobTemplate", {})
+                    if not job_template:
+                        error_msg = f"CronJob '{cronjob_name}' has no job template"
+                        _LOGGER.error(error_msg)
+                        return {
+                            "success": False,
+                            "error": error_msg,
+                            "cronjob_name": cronjob_name,
+                            "namespace": namespace,
+                        }
+
+                    # Create the job object
+                    job_data = {
+                        "apiVersion": "batch/v1",
+                        "kind": "Job",
+                        "metadata": {
+                            "name": job_name,
+                            "namespace": namespace,
+                            "labels": {
+                                "cronjob.kubernetes.io/manual": "true",
+                                "cronjob.kubernetes.io/name": cronjob_name,
+                            },
+                        },
+                        "spec": job_template.get("spec", {}),
+                    }
+
+                    # Create the job
+                    jobs_url = f"https://{self.host}:{self.port}/apis/batch/v1/namespaces/{namespace}/jobs"
+
+                    async with session.post(
+                        jobs_url,
+                        headers=headers,
+                        json=job_data,
+                        ssl=await self._get_ssl_param(),
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as job_response:
+                        if job_response.status == 201:  # Created
+                            job_result = await job_response.json()
+                            _LOGGER.info(
+                                "Successfully triggered CronJob '%s' in namespace '%s' via aiohttp, created job '%s'",
+                                cronjob_name,
+                                namespace,
+                                job_name,
+                            )
+                            return {
+                                "success": True,
+                                "job_name": job_name,
+                                "namespace": namespace,
+                                "cronjob_name": cronjob_name,
+                                "job_uid": job_result.get("metadata", {}).get(
+                                    "uid", ""
+                                ),
+                            }
+                        else:
+                            error_msg = f"Failed to create job for CronJob '{cronjob_name}' via aiohttp: HTTP {job_response.status}"
+                            _LOGGER.error(error_msg)
+                            return {
+                                "success": False,
+                                "error": error_msg,
+                                "cronjob_name": cronjob_name,
+                                "namespace": namespace,
+                            }
+
+        except Exception as ex:
+            error_msg = (
+                f"Failed to trigger CronJob '{cronjob_name}' via aiohttp: {ex!s}"
+            )
+            self._log_error("_trigger_cronjob_aiohttp", ex)
+            return {
+                "success": False,
+                "error": error_msg,
+                "cronjob_name": cronjob_name,
+                "namespace": namespace,
+            }
+
+    def _format_cronjob_from_dict(self, cronjob_dict: dict[str, Any]) -> dict[str, Any]:
+        """Format CronJob dictionary from API response."""
+        metadata = cronjob_dict.get("metadata", {})
+        spec = cronjob_dict.get("spec", {})
+        status = cronjob_dict.get("status", {})
+
+        return {
+            "name": metadata.get("name", ""),
+            "namespace": metadata.get("namespace", ""),
+            "schedule": spec.get("schedule", ""),
+            "suspend": spec.get("suspend", False),
+            "last_schedule_time": status.get("lastScheduleTime"),
+            "next_schedule_time": status.get("nextScheduleTime"),
+            "active_jobs_count": len(status.get("active", [])),
+            "successful_jobs_history_limit": spec.get("successfulJobsHistoryLimit", 3),
+            "failed_jobs_history_limit": spec.get("failedJobsHistoryLimit", 1),
+            "concurrency_policy": spec.get("concurrencyPolicy", "Allow"),
+            "uid": metadata.get("uid", ""),
+            "creation_timestamp": metadata.get("creationTimestamp"),
+        }
+
+    # Job methods
+    async def get_jobs_count(self) -> int:
+        """Get the count of Jobs in the cluster."""
+        try:
+            result = await self._fetch_resource_count("apis/batch/v1", "jobs")
+            if result is not None:
+                self._log_success("get jobs count", f"count: {result}")
+            return result
+        except Exception as ex:
+            self._log_error("get_jobs_count", ex)
+            raise
+
+    async def get_jobs(self) -> list[dict[str, Any]]:
+        """Get detailed information about Jobs in the cluster."""
+        try:
+            result = await self._fetch_resource_list(
+                "apis/batch/v1", "jobs", self._format_job_from_dict
+            )
+            if result:
+                self._log_success("get jobs", f"retrieved {len(result)} jobs")
+            return result
+        except Exception as ex:
+            self._log_error("get_jobs", ex)
+            raise
+
+    def _format_job_from_dict(self, job_dict: dict[str, Any]) -> dict[str, Any]:
+        """Format a Job API response dict to the internal representation."""
+        metadata = job_dict.get("metadata", {})
+        spec = job_dict.get("spec", {})
+        status = job_dict.get("status", {})
+
+        return {
+            "name": metadata.get("name", ""),
+            "namespace": metadata.get("namespace", ""),
+            "completions": spec.get("completions", 1),
+            "succeeded": status.get("succeeded", 0),
+            "failed": status.get("failed", 0),
+            "active": status.get("active", 0),
+            "start_time": status.get("startTime"),
+            "completion_time": status.get("completionTime"),
+            "uid": metadata.get("uid", ""),
+            "creation_timestamp": metadata.get("creationTimestamp"),
+        }
+
+    async def trigger_cronjob(
+        self, cronjob_name: str, namespace: str | None = None
+    ) -> dict[str, Any]:
+        """Trigger a CronJob by creating a job from it."""
+        _LOGGER.debug(
+            "trigger_cronjob called with cronjob_name: %s, namespace: %s",
+            cronjob_name,
+            namespace,
+        )
+        target_namespace = namespace or self.namespace
+
+        # Check namespace permissions
+        if not self.monitor_all_namespaces and target_namespace not in self.namespaces:
+            error_msg = (
+                f"Cannot trigger CronJob '{cronjob_name}' in namespace '{target_namespace}': "
+                f"Integration is configured to monitor only namespaces {self.namespaces}. "
+                f"Enable 'monitor_all_namespaces' in configuration to access other namespaces."
+            )
+            _LOGGER.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "cronjob_name": cronjob_name,
+                "namespace": target_namespace,
+            }
+
+        # _trigger_cronjob_aiohttp never raises; failures come back in the dict.
+        return await self._trigger_cronjob_aiohttp(cronjob_name, target_namespace)
+
+    async def suspend_cronjob(
+        self, cronjob_name: str, namespace: str | None = None
+    ) -> dict[str, Any]:
+        """Suspend a CronJob by setting suspend=true."""
+        return await self._set_cronjob_suspend(cronjob_name, namespace, True)
+
+    async def resume_cronjob(
+        self, cronjob_name: str, namespace: str | None = None
+    ) -> dict[str, Any]:
+        """Resume a CronJob by setting suspend=false."""
+        return await self._set_cronjob_suspend(cronjob_name, namespace, False)
+
+    async def _set_cronjob_suspend(
+        self, cronjob_name: str, namespace: str | None, suspend: bool
+    ) -> dict[str, Any]:
+        """Patch spec.suspend on a CronJob after checking the namespace is monitored."""
+        operation = "suspend" if suspend else "resume"
+        target_namespace = namespace or self.namespace
+
+        # Check namespace permissions
+        if not self.monitor_all_namespaces and target_namespace not in self.namespaces:
+            namespaces_str = ", ".join(self.namespaces)
+            error_msg = (
+                f"Cannot {operation} CronJob '{cronjob_name}' in namespace '{target_namespace}': "
+                f"Integration is configured to monitor only namespace(s) '{namespaces_str}'. "
+                f"Enable 'monitor_all_namespaces' in configuration to access other namespaces."
+            )
+            _LOGGER.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "cronjob_name": cronjob_name,
+                "namespace": target_namespace,
+            }
+
+        # _patch_cronjob_aiohttp never raises; failures come back in the dict.
+        return await self._patch_cronjob_aiohttp(
+            cronjob_name, target_namespace, {"spec": {"suspend": suspend}}, operation
+        )
+
+    # -------------------------------------------------------------------------
+    # Watch API helpers (used by the coordinator watch loop)
+    # -------------------------------------------------------------------------
+
+    async def list_resource_with_version(
+        self, url: str
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Fetch a resource list and return (items, resourceVersion).
+
+        The resourceVersion from the list metadata is used to start a watch
+        that picks up only events that occurred after the list was fetched.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                headers=headers,
+                ssl=await self._get_ssl_param(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                resource_version = (
+                    data.get("metadata", {}).get("resourceVersion", "0") or "0"
+                )
+                return data.get("items", []), resource_version
+
+    async def watch_stream(
+        self, url: str, resource_version: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Async generator that yields raw watch events from the Kubernetes API.
+
+        The caller is responsible for handling ResourceVersionExpired by
+        re-listing and restarting the watch. An expired resourceVersion arrives
+        either as an HTTP 410 or — far more commonly — as an HTTP 200 stream
+        whose only event is ``{"type": "ERROR", "object": {"code": 410, ...}}``
+        followed by a close (issue #431). Any other ERROR event raises
+        KubernetesApiError so the caller's backoff path handles it; ERROR events
+        are never yielded.
+        """
+        params = {
+            "watch": "true",
+            "resourceVersion": resource_version,
+            "timeoutSeconds": str(DEFAULT_WATCH_TIMEOUT_SECONDS),
+            "allowWatchBookmarks": "true",
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                params=params,
+                headers=headers,
+                ssl=await self._get_ssl_param(),
+                timeout=aiohttp.ClientTimeout(
+                    total=None,
+                    connect=10,
+                    # Guard against stale TCP connections that never close.
+                    # The server's ?timeoutSeconds forces a clean close within
+                    # DEFAULT_WATCH_TIMEOUT_SECONDS; give a 30-second grace period.
+                    sock_read=DEFAULT_WATCH_TIMEOUT_SECONDS + 30,
+                ),
+            ) as resp:
+                if resp.status == 410:
+                    raise ResourceVersionExpired(
+                        f"Watch resource version {resource_version!r} expired (HTTP 410)"
+                    )
+                resp.raise_for_status()
+                async for raw_line in resp.content:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    if event.get("type") == "ERROR":
+                        status = event.get("object") or {}
+                        if status.get("code") == 410:
+                            raise ResourceVersionExpired(
+                                f"Watch resource version {resource_version!r} "
+                                f"expired (ERROR event): {status.get('message')}"
+                            )
+                        raise KubernetesApiError(
+                            f"Watch ERROR event {status.get('reason')} "
+                            f"(code {status.get('code')}): {status.get('message')}"
+                        )
+                    yield event

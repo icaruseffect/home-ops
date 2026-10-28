@@ -1,0 +1,311 @@
+---
+# Default values for home-assistant.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Number of replicas for the deployment
+replicaCount: 1
+
+# Image settings
+image:
+  # Repository for the Home Assistant image
+  repository: ghcr.io/home-assistant/home-assistant
+  # Image pull policy
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  # tag: "2025.5.3"
+
+# List of imagePullSecrets for private image repositories
+imagePullSecrets: []
+# Override the default name of the Helm chart
+nameOverride: ""
+# Override the default full name of the Helm chart
+fullnameOverride: "home-assistant"
+
+# Service account settings
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations:
+    reloader.stakater.com/auto: "true"
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Annotations to add to the pod
+podAnnotations:
+  cert-manager.io/inject-ca-from: homeautomation/cert-tls-hass
+  k8s.v1.cni.cncf.io/networks: macvlan-homeautomation
+
+# Pod security context settings
+podSecurityContext: {}
+  # runAsUser: 568
+  # runAsGroup: 568
+  # fsGroup: 568
+  # fsGroupChangePolicy: "OnRootMismatch"
+
+# Environment variables
+env:
+  - name: TZ
+    value: Europe/Berlin
+  - name: GARMINTOKENS
+    value: /config/garth
+  - name: PYTHONPATH
+    value: /config/deps
+  - name: REQUESTS_CA_BUNDLE
+    value: /etc/ssl/certs/ca-certificates.crt
+  - name: SSL_CERT_FILE
+    value: /etc/ssl/certs/ca-certificates.crt
+  - name: HASS_RECORDER_DB_URL
+    valueFrom:
+      secretKeyRef:
+        name: homeassistant-db
+        key: db_url
+
+# - name: SOME_VAR_FROM_CONFIG_MAP
+#   valueFrom:
+#     configMapRef:
+#       name: configmap-name
+#       key: config-key
+# - name: SOME_SECRET
+#   valueFrom:
+#     secretKeyRef:
+#       name: secret-name
+#       key: secret-key
+
+# Use environment variables from ConfigMaps or Secrets
+envFrom: []
+# - configMapRef:
+#     name: config-map-name
+# - secretRef:
+#     name: secret-name
+
+hostPort:
+  # Enable 'hostPort' or not
+  enabled: false
+  port: 8123
+
+# Container security context settings
+securityContext: #{}
+  capabilities:
+    # drop:
+    # - ALL
+    add:
+      - NET_ADMIN # for bluetooth access
+      - NET_RAW
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# Service settings
+service:
+  # Service type (ClusterIP, NodePort, LoadBalancer, or ExternalName)
+  type: ClusterIP
+  # Service port
+  port: 8080
+
+# Ingress settings
+ingress:
+  # Enable ingress for home assistant
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: hass.internal
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+# Resource settings for the container
+# Burstable QoS. As of 2026-09-23, the 2Gi limit is too low: the pod is being
+# OOMKilled every few hours (cgroup OOM, exit 137), driven by the
+# mqtt_vacuum_camera custom integration (HA core flags it as untested/
+# "might cause stability problems" — map image rendering via SyncWorker
+# threads). Bumped to 3Gi to stop the crash loop; node has request headroom
+# (44% allocated) even though limits are already oversubscribed on paper.
+# Not Guaranteed (request == limit) — this node can't safely commit hard.
+priorityClassName: homelab-important
+resources:
+  requests:
+    cpu: 250m
+    memory: 2Gi
+  limits:
+    cpu: 500m
+    memory: 3Gi
+
+# No startupProbe was set, so livenessProbe (below) applied from container start -
+# failureThreshold 3 x periodSeconds 20 gives HA ~40-60s to bind :8123 before kubelet
+# SIGTERMs it. Confirmed live 2026-09-25: it was dying with "connection refused" (never
+# bound the port at all, not just answering slowly) on every single restart, 85 times
+# over 2d11h - a genuine cold start (recorder DB connection, custom kubernetes
+# integration, many entities) plus the shared paperless-postgres-db CNPG cluster being
+# degraded (13 restarts/42h, stuck reconciling due to a plugin error) can easily take
+# longer than that. startupProbe below gives it up to 5 minutes to come up once;
+# livenessProbe/readinessProbe only start being enforced after that first success.
+startupProbe:
+  failureThreshold: 30
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+  periodSeconds: 10
+  successThreshold: 1
+  timeoutSeconds: 5
+
+# Chart defaults (timeoutSeconds: 2/1) are too tight for this node's CPU contention -
+# HA itself is healthy but occasionally too slow to answer within the deadline, so
+# kubelet was killing/restarting it on "context deadline exceeded" liveness failures
+# (confirmed live 2026-09-23, unrelated to the memory fix above).
+livenessProbe:
+  failureThreshold: 3
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+  periodSeconds: 20
+  successThreshold: 1
+  timeoutSeconds: 10
+readinessProbe:
+  failureThreshold: 3
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+  periodSeconds: 10
+  successThreshold: 1
+  timeoutSeconds: 5
+
+# Node selector settings for scheduling the pod on specific nodes
+nodeSelector: {}
+
+# Tolerations settings for scheduling the pod based on node taints
+tolerations: []
+
+# Affinity settings for controlling pod scheduling
+affinity: {}
+
+# Persistence values for the Home Assistant instance
+persistence:
+  # Enable or disable persistence
+  enabled: true
+  # Access mode for the persistent volume claim
+  accessMode: ReadWriteOnce
+  # Size of the persistent volume claim
+  size: 5Gi
+  # Storage class for the persistent volume claim
+  storageClass: "openebs-hostpath"
+
+# if you need any additional volumes, you can define them here
+additionalVolumes:
+  - name: k8s-ca
+    configMap:
+      name: kube-root-ca.crt
+      items:
+        - key: ca.crt
+          path: kube-root-ca.crt
+  - hostPath:
+      path: /run/dbus
+    #     type: CharDevice
+    name: dbus
+  - secret:
+      secretName: garmin-token
+    name: garmin-token
+  - name: cert
+    secret:
+      secretName: cert-tls-hass
+  - name: home-assistant-backups
+    persistentVolumeClaim:
+      claimName: home-assistant-backups
+      storageClass: openebs-hostpath
+  - name: trust-bundle
+    configMap:
+      name: home-ca.lan
+  # - name: home-assistant-config
+  #   projected:
+  #     sources:c
+  #       - configMap:
+  #           name: home-assistant-config
+  #           items:
+  #             - key: configuration.yaml
+  #               path: configuration.yaml
+  # - name: home-assistant-secrets
+  #   # secret:
+  #   #   secretName: home-assistant-secrets
+  #   projected:
+  #     sources:
+  #       - secret:
+  #           name: home-assistant-secrets
+  #           items:
+  #             - key: secret.txt
+  #               path: secret.txt
+
+# if you need any additional volume mounts, you can define them here
+additionalMounts:
+  - mountPath: /run/dbus
+    name: dbus
+  - mountPath: /config/garth
+    name: garmin-token
+  - mountPath: /etc/ssl/certs/home-assistant.crt
+    name: cert
+    subPath: tls.crt
+  - mountPath: /etc/ssl/certs/home-assistant.key
+    name: cert
+    subPath: tls.key
+  - mountPath: /etc/ssl/certs/kube-root-ca.crt
+    name: k8s-ca
+    subPath: kube-root-ca.crt
+  - mountPath: /config/backups
+    name: home-assistant-backups
+  - mountPath: /etc/ssl/certs/ca-certificates.crt
+    name: trust-bundle
+    subPath: root-certs.pem
+  # - mountPath: /config/
+  #   name: home-assistant-config
+  # - mountPath: /config/
+  #   name: home-assistant-secrets
+
+# Addons configuration for additional services
+addons:
+  # Code-server addon configuration
+  codeserver:
+    # Enable or disable the code-server addon
+    enabled: false
+    # Resource settings for the code-server container
+    resources: {}
+    # Image settings for the code-server addon
+    image:
+      # Repository for the code-server image
+      repository: ghcr.io/coder/code-server
+      # Image pull policy for the code-server image
+      pullPolicy: IfNotPresent
+      # Tag for the code-server image
+      tag: "4.20.0"
+    # Service settings
+    service:
+      # Service type (ClusterIP, NodePort, LoadBalancer, or ExternalName)
+      type: ClusterIP
+      # Service port
+      port: 12321
+    # Ingress settings for the code-server addon
+    ingress:
+      # Enable or disable the ingress for the code-server addon
+      enabled: false
+      # Ingress class name
+      className: ""
+      # Ingress annotations
+      annotations: {}
+      # Ingress hosts configuration
+      hosts:
+        - host: chart-example.local
+          paths:
+            - path: /
+              pathType: ImplementationSpecific
+      # Ingress TLS configuration
+      tls: []

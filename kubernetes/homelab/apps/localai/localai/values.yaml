@@ -1,0 +1,160 @@
+---
+replicaCount: 1
+
+deployment:
+  image:
+    # repository: quay.io/go-skynet/local-ai
+    repository: docker.io/localai/localai
+    # tag: latest-aio-cpu # Use the appropriate tag. E.g. for cpu only: "latest-cpu"
+    tag: latest
+  env:
+    threads: 4
+    context_size: 512
+    # see the documentation at: https://localai.io/basics/build/index.html                                                                           │
+    CMAKE_ARGS: "-DGGML_AVX512=OFF"
+    # SYCL_CACHE_PERSISTENT: "1"
+    # SYCL_DEVICE_FILTER: "opencl:gpu:0"
+    # SYCL_CACHE_DIR: "/tmp/.cache/oneapi/neural_compressor"
+
+  # # Inject Secrets into Environment:
+  secretEnv:
+    - name: HUGGINGFACEHUB_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: localai
+          key: HUGGINGFACEHUB_API_TOKEN
+
+  modelsPath: "/models"
+  prompt_templates:
+    # To use cloud provided (eg AWS) image, provide it like: 1234356789.dkr.ecr.us-REGION-X.amazonaws.com/busybox
+    image: busybox
+  pullPolicy: IfNotPresent
+  imagePullSecrets: []
+    # - name: secret-names
+
+  ## Needed for GPU Nodes
+  # runtimeClassName: gpu
+
+  # volumeMounts:
+  #   - name: dev-dri
+  #     mountPath: /dev/dri
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+  #
+# volumes:
+#   - name: dev-dri
+#     hostPath:
+#       path: /dev/dri
+
+# Model config to include
+modelsConfigs: {}
+  # phi-2: |
+  #   name: phi-2
+  #   context_size: 2048
+  #   f16: true
+  #   mmap: true
+  #   trimsuffix:
+  #   - "\n"
+  #   parameters:
+  #     model: phi-2.Q8_0.gguf
+  #     temperature: 0.2
+  #     top_k: 40
+  #     top_p: 0.95
+  #     seed: -1
+  #   template:
+  #     chat: &template |-
+  #       Instruct: {{.Input}}
+  #       Output:
+  #     completion: *template
+
+# Prompt templates to include
+# Note: the keys of this map will be the names of the prompt template files
+promptTemplates: {}
+  # ggml-gpt4all-j.tmpl: |
+  #   The prompt below is a question to answer, a task to complete, or a conversation to respond to; decide which and write an appropriate response.
+  #   ### Prompt:  #   {{.Input}}
+  #   ### Response:
+
+initContainers: []
+# Example:
+# - name: my-init-container
+#   image: my-init-image
+#   imagePullPolicy: IfNotPresent
+#   command: ["/bin/sh", "-c", "echo init"]
+#   volumeMounts:
+#     - name: my-volume
+#       mountPath: /path/to/mount
+
+sidecarContainers: []
+# Example:
+# - name: my-sidecar-container
+#   image: my-sidecar-image
+#   imagePullPolicy: IfNotPresent
+#   ports:
+#     - containerPort: 1234
+
+# Persistent storage for models and prompt templates.
+# PVC and HostPath are mutually exclusive. If both are enabled,
+# PVC configuration takes precedence. If neither are enabled, ephemeral
+# storage is used.
+persistence:
+  models:
+    enabled: true
+    annotations: {}
+    storageClass: "openebs-hostpath" # Use default storage class
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    globalMount: /models
+  output:
+    enabled: true
+    annotations: {}
+    storageClass: "openebs-hostpath" # Use default storage class
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    globalMount: /tmp/generated
+
+service:
+  type: ClusterIP
+  # If deferring to an internal only load balancer
+  # externalTrafficPolicy: Local
+  port: 8080
+  nodePort:
+  annotations: {}
+  # If using an AWS load balancer, you'll need to override the default 60s load balancer idle timeout
+  # service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "1200"
+
+ingress:
+  enabled: true
+  className: "cilium"
+  annotations:
+    cert-manager.io/cluster-issuer: ca-issuer
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "256"
+    k8s-gateway.dns/hostname: localai.lab.lan
+  hosts:
+    - host: localai.lab.lan
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: localai.lab.lan-tls
+      hosts:
+        - localai.lab.lan
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

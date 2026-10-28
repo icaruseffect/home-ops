@@ -1,0 +1,82 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mail-archiver-postgres-netpol
+  namespace: mail-archiver
+  labels:
+    app: mail-archiver-postgres
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: mail-archiver-postgres-cluster
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow connections from mail-archiver application
+    - from:
+        - podSelector:
+            matchLabels:
+              app: mail-archiver
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow connections from cnpg-operator for management
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000 # CNPG metrics
+    # Allow monitoring from prometheus
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9187 # postgres_exporter
+        - protocol: TCP
+          port: 8000 # cnpg metrics
+    # Allow intra-cluster communication for replication
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: mail-archiver-postgres-cluster
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow connections to other PostgreSQL instances for replication
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: mail-archiver-postgres-cluster
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    # Allow outbound HTTPS for package updates and container registry
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    # Allow outbound HTTP for package updates
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80

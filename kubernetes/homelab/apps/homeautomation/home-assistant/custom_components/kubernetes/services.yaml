@@ -1,0 +1,223 @@
+---
+scale_workload:
+  name: Scale Workload
+  description: Scale one or more Kubernetes workloads (Deployments/StatefulSets) to the specified number of replicas.
+  fields:
+    workload_name:
+      name: Workload Name
+      description: The name of a single workload to scale (use workload_names for multiple).
+      required: false
+      selector:
+        entity:
+          domain: switch
+          integration: kubernetes
+    workload_names:
+      name: Workload Names
+      description: A list of workload names to scale (use workload_name for single).
+      required: false
+      selector:
+        target:
+          entity:
+            domain: switch
+            integration: kubernetes
+    replicas:
+      name: Replicas
+      description: The number of replicas to scale to (0 or more).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+    namespace:
+      name: Namespace
+      description: The namespace containing the workload(s) (optional, defaults to configured namespace).
+      required: false
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:
+
+start_workload:
+  name: Start Workload
+  description: Start one or more Kubernetes workloads by scaling them to the specified number of replicas, or trigger CronJobs (creates a job immediately).
+  fields:
+    workload_name:
+      name: Workload Name
+      description: The name of a single workload to start (use workload_names for multiple).
+      required: false
+      selector:
+        entity:
+          domain: switch
+          integration: kubernetes
+    workload_names:
+      name: Workload Names
+      description: A list of workload names to start (use workload_name for single).
+      required: false
+      selector:
+        target:
+          entity:
+            domain: switch
+            integration: kubernetes
+    replicas:
+      name: Replicas
+      description: The number of replicas to scale to for Deployments/StatefulSets (1 or more, defaults to 1). Ignored for CronJobs.
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 100
+    namespace:
+      name: Namespace
+      description: The namespace containing the workload(s) (optional, defaults to configured namespace).
+      required: false
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:
+
+stop_workload:
+  name: Stop Workload
+  description: Stop one or more Kubernetes workloads by scaling them to 0 replicas (Deployments/StatefulSets). CronJobs are not affected - use the switch entity to suspend them.
+  fields:
+    workload_name:
+      name: Workload Name
+      description: The name of a single workload to stop (use workload_names for multiple).
+      required: false
+      selector:
+        entity:
+          domain: switch
+          integration: kubernetes
+    workload_names:
+      name: Workload Names
+      description: A list of workload names to stop (use workload_name for single).
+      required: false
+      selector:
+        target:
+          entity:
+            domain: switch
+            integration: kubernetes
+    namespace:
+      name: Namespace
+      description: The namespace containing the workload(s) (optional, defaults to configured namespace).
+      required: false
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:
+
+restart_workload:
+  name: Restart Workload
+  description: Perform a rolling restart of one or more Kubernetes workloads (Deployments/StatefulSets/DaemonSets). Equivalent to "kubectl rollout restart".
+  fields:
+    workload_name:
+      name: Workload Name
+      description: The name of a single workload to restart (use workload_names for multiple).
+      required: false
+      selector:
+        entity:
+          domain: switch
+          integration: kubernetes
+    workload_names:
+      name: Workload Names
+      description: A list of workload names to restart (use workload_name for single).
+      required: false
+      selector:
+        target:
+          entity:
+            domain: switch
+            integration: kubernetes
+    namespace:
+      name: Namespace
+      description: The namespace containing the workload(s) (optional, defaults to configured namespace).
+      required: false
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:
+
+delete_job:
+  name: Delete Job
+  description: Delete one or more Kubernetes Jobs (also deletes their pods). Useful for clearing failed Jobs.
+  fields:
+    job_name:
+      name: Job Name
+      description: The name of a single Job to delete (use job_names for multiple).
+      required: false
+      selector:
+        text:
+    job_names:
+      name: Job Names
+      description: A list of Job names to delete (use job_name for a single Job).
+      required: false
+      selector:
+        text:
+          multiple: true
+    namespace:
+      name: Namespace
+      description: The namespace of the Job(s). If omitted, it is resolved from monitored data, then the configured default.
+      required: false
+      selector:
+        text:
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:
+
+cordon_node:
+  name: Cordon Node
+  description: Cordon one or more Kubernetes nodes (mark them unschedulable). Running pods are not evicted; new pods will not be scheduled onto the node.
+  fields:
+    node_name:
+      name: Node Name
+      description: The name of a single node to cordon (use node_names for multiple).
+      required: false
+      selector:
+        text:
+    node_names:
+      name: Node Names
+      description: A list of node names to cordon (use node_name for a single node).
+      required: false
+      selector:
+        text:
+          multiple: true
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:
+
+uncordon_node:
+  name: Uncordon Node
+  description: Uncordon one or more Kubernetes nodes (mark them schedulable again).
+  fields:
+    node_name:
+      name: Node Name
+      description: The name of a single node to uncordon (use node_names for multiple).
+      required: false
+      selector:
+        text:
+    node_names:
+      name: Node Names
+      description: A list of node names to uncordon (use node_name for a single node).
+      required: false
+      selector:
+        text:
+          multiple: true
+    entry_id:
+      name: Config Entry ID
+      description: Target a specific configured cluster (optional; defaults to the first).
+      required: false
+      selector:
+        text:

@@ -1,0 +1,15 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - healthcheck-configmap.yaml
+  - monitor-serviceaccount.yaml
+  - monitor-role.yaml
+  - monitor-rolebinding.yaml
+
+patches:
+  - path: mqtt-monitor-patch.yaml
+    target:
+      kind: Deployment
+      name: zigbee2mqtt

@@ -1,0 +1,326 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kubernetes Configuration",
+        "description": "Enter your Kubernetes cluster connection details. When Home Assistant is running inside the Kubernetes cluster, the host, port, API token, and CA certificate fields are pre-filled from the pod's ServiceAccount.",
+        "data": {
+          "cluster_name": "Cluster Name",
+          "host": "Cluster API IP address",
+          "port": "Cluster API port",
+          "use_in_cluster": "Prefer in-cluster ServiceAccount token",
+          "api_token": "API Token",
+          "ca_cert": "CA Certificate (optional)",
+          "verify_ssl": "Verify SSL",
+          "monitor_all_namespaces": "Monitor All Namespaces",
+          "switch_update_interval": "Switch Update Interval (seconds)",
+          "scale_verification_timeout": "Scale Verification Timeout (seconds)",
+          "scale_cooldown": "Scale Cooldown (seconds)",
+          "device_grouping_mode": "Device Grouping Mode"
+        },
+        "data_description": {
+          "cluster_name": "A friendly name to identify this Kubernetes cluster in Home Assistant. This name will be used as the integration name and for device identification.",
+          "host": "The hostname or IP address of your Kubernetes API server. Do not include the protocol (http:// or https://).",
+          "port": "The port number for the Kubernetes API server.",
+          "use_in_cluster": "When Home Assistant runs inside the Kubernetes cluster, re-read the bearer token from the projected ServiceAccount volume on each request. This handles automatic token rotation. While this option is enabled, the API token entered below is only used as a fallback if the file becomes unreadable — disable it to authenticate with the token below.",
+          "api_token": "A valid Kubernetes service account token with appropriate RBAC permissions. This token is used to authenticate API requests to your cluster. While 'Prefer in-cluster ServiceAccount token' is enabled above, this token is optional and only used as a fallback — leave it empty to use the mounted ServiceAccount token.",
+          "ca_cert": "Optional path to your cluster's CA certificate file. Required if using self-signed certificates or custom Certificate Authorities. Leave empty if using standard certificates.",
+          "verify_ssl": "Whether to verify SSL certificates when connecting to the Kubernetes API. Disable this only for self-signed certificates or development environments.",
+          "monitor_all_namespaces": "When enabled, the integration will monitor all namespaces in your cluster. When disabled, you will be prompted to select specific namespaces to monitor. Requires cluster-wide permissions when enabled.",
+          "switch_update_interval": "How often (in seconds) the integration polls the Kubernetes API to update switch states. Lower values provide more responsive switches but increase API load.",
+          "scale_verification_timeout": "Maximum time (in seconds) to wait for scaling operations to complete before timing out. Increase this value for slow clusters or large deployments.",
+          "scale_cooldown": "Seconds after a scaling operation during which cluster refreshes do not overwrite the switch's new state, so it does not flicker back before the cluster has caught up.",
+          "device_grouping_mode": "Choose how entities are organized in Home Assistant. Group by Namespace creates a device for each namespace, while Group by Cluster creates a single device containing all nodes, sensors, and entities."
+        }
+      },
+      "namespaces": {
+        "title": "Select Namespaces to Monitor",
+        "description": "Choose which Kubernetes namespaces you want to monitor. You can select multiple namespaces from the list below. Only resources in the selected namespaces will be monitored by this integration.\n\n**Tip:** Use the dropdown to search and select namespaces. Selected namespaces will appear as chips that can be removed by clicking the X icon.",
+        "data": {
+          "namespace": "Select Namespaces"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with Kubernetes",
+        "description": "The API token for cluster **{cluster_name}** ({host}) is no longer accepted by the Kubernetes API. Enter a new service account token to restore the connection. The host, port, and TLS settings of this entry stay unchanged.\n\nIf this entry uses the in-cluster ServiceAccount, the projected token normally refreshes itself — being asked here means it is being rejected persistently, usually because the ServiceAccount or its RBAC binding was removed. Submitting a token here therefore turns off **Prefer in-cluster ServiceAccount token** for this entry, so the token you enter is the one actually used. You can re-enable it under Reconfigure once the ServiceAccount is healthy again.",
+        "data": {
+          "api_token": "API Token"
+        },
+        "data_description": {
+          "api_token": "A valid Kubernetes service account token with the RBAC permissions this integration requires."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Kubernetes Connection",
+        "description": "Update your Kubernetes cluster connection details and settings. The cluster name cannot be changed.",
+        "data": {
+          "host": "Cluster API IP address",
+          "port": "Cluster API port",
+          "use_in_cluster": "Prefer in-cluster ServiceAccount token",
+          "api_token": "API Token",
+          "ca_cert": "CA Certificate (optional)",
+          "verify_ssl": "Verify SSL",
+          "monitor_all_namespaces": "Monitor All Namespaces",
+          "switch_update_interval": "Switch Update Interval (seconds)",
+          "scale_verification_timeout": "Scale Verification Timeout (seconds)",
+          "scale_cooldown": "Scale Cooldown (seconds)",
+          "device_grouping_mode": "Device Grouping Mode"
+        },
+        "data_description": {
+          "host": "The hostname or IP address of your Kubernetes API server. Do not include the protocol (http:// or https://).",
+          "port": "The port number for the Kubernetes API server.",
+          "use_in_cluster": "When Home Assistant runs inside the Kubernetes cluster, re-read the bearer token from the projected ServiceAccount volume on each request. This handles automatic token rotation. While this option is enabled, the API token entered below is only used as a fallback if the file becomes unreadable — disable it to authenticate with the token below.",
+          "api_token": "A valid Kubernetes service account token with appropriate RBAC permissions. While 'Prefer in-cluster ServiceAccount token' is enabled above, this token is optional and only used as a fallback — leave it empty to use the mounted ServiceAccount token.",
+          "ca_cert": "Optional path to your cluster's CA certificate file. Leave empty if using standard certificates.",
+          "verify_ssl": "Whether to verify SSL certificates when connecting to the Kubernetes API.",
+          "monitor_all_namespaces": "When enabled, the integration will monitor all namespaces in your cluster. When disabled, you will be prompted to select specific namespaces to monitor.",
+          "switch_update_interval": "How often (in seconds) the integration polls the Kubernetes API to update switch states.",
+          "scale_verification_timeout": "Maximum time (in seconds) to wait for scaling operations to complete before timing out.",
+          "scale_cooldown": "Seconds after a scaling operation during which cluster refreshes do not overwrite the switch's new state.",
+          "device_grouping_mode": "Choose how entities are organized in Home Assistant."
+        }
+      },
+      "reconfigure_namespaces": {
+        "title": "Select Namespaces to Monitor",
+        "description": "Choose which Kubernetes namespaces you want to monitor. Only resources in the selected namespaces will be monitored.",
+        "data": {
+          "namespace": "Select Namespaces"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Kubernetes cluster. Check the host and port, and for a self-signed or custom CA either provide the CA certificate path or disable Verify SSL.",
+      "cannot_fetch_namespaces": "Failed to fetch namespaces from cluster. Please check your connection settings and permissions.",
+      "kubernetes_not_installed": "Kubernetes Python package is not installed. Please install it using: pip install kubernetes==33.1.0",
+      "at_least_one_namespace_required": "At least one namespace is required when not monitoring all namespaces",
+      "token_required": "Enter an API token. It may only be left empty when 'Prefer in-cluster ServiceAccount token' is enabled and Home Assistant runs inside the cluster.",
+      "invalid_auth": "The Kubernetes API rejected this token. Check that the token is valid and that its ServiceAccount still has the required RBAC permissions."
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reconfigure_successful": "Configuration updated successfully",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kubernetes Options",
+        "description": "Configure advanced options for the Kubernetes integration.",
+        "data": {
+          "enable_panel": "Enable Sidebar Panel",
+          "enable_watch": "Enable Watch API",
+          "enable_events": "Enable Cluster Events",
+          "event_types": "Event Types",
+          "disabled_resources": "Disable data collection for",
+          "exclude_job_pods": "Exclude Job and CronJob pods"
+        },
+        "data_description": {
+          "enable_panel": "Show the Kubernetes dashboard panel in the Home Assistant sidebar. The panel provides an overview of your cluster, nodes, pods, workloads, and integration settings. Disable this if you prefer to use only the standard Home Assistant entities and services.",
+          "enable_watch": "Use the Kubernetes watch API for real-time state updates (enabled by default). Pod and resource state changes appear in Home Assistant within seconds, with a slow poll every 5 minutes as a fallback. Requires the service account to have 'watch' permission on all monitored resources (granted by manifests/full/); if a watch connection keeps failing the integration reverts to regular interval polling automatically; if the ServiceAccount may not watch a resource (HTTP 403) that stream retries once a minute and a 'Missing permissions' repair issue names it until access works again. Disable to use interval polling only.",
+          "enable_events": "Create a 'Cluster events' event entity that fires Home Assistant events for Kubernetes cluster activity (OOMKilling, FailedScheduling, BackOff, Evicted, Unhealthy, ImagePullBackOff, and more). Use these events to trigger automations and alerts. Requires get/list/watch permission on core v1 events (granted by manifests/full/).",
+          "event_types": "Which Kubernetes event types to surface. 'Warning only' (default) limits events to Warning-type Kubernetes events such as OOM kills and scheduling failures. 'All events' also includes Normal-type informational events. Note: recurring conditions (e.g. CrashLoopBackOff) fire an event on each Kubernetes count increment.",
+          "disabled_resources": "Opt out of collecting selected data to reduce entity count, recorder growth, and Kubernetes API load. Pods, DaemonSets, Jobs, Ingresses, and Services stop being fetched entirely. Nodes, Deployments, StatefulSets, and CronJobs only drop their sensors — their switches (scale, suspend, cordon) keep working. 'CPU/memory metrics' stops all Metrics API calls; 'Aggregate count sensors' removes the per-cluster count sensors. Existing entities of a disabled category are removed automatically.",
+          "exclude_job_pods": "Skip pods owned by a Job or CronJob (enabled by default). Every scheduled run produces a new pod name, so tracking them adds an entity per run that is never reused and is never purged from the entity registry. Disable this only if you need per-run pod entities."
+        }
+      }
+    }
+  },
+  "selector": {
+    "device_grouping_mode": {
+      "options": {
+        "namespace": "Group by Namespace",
+        "cluster": "Group by Cluster"
+      }
+    },
+    "disabled_resources": {
+      "options": {
+        "pods": "Pods (sensors + API fetch)",
+        "nodes": "Node sensors (cordon switches stay)",
+        "deployments": "Deployment sensors (scale switches stay)",
+        "statefulsets": "StatefulSet sensors (scale switches stay)",
+        "daemonsets": "DaemonSets (sensors + API fetch)",
+        "cronjobs": "CronJob sensors (suspend switches stay)",
+        "jobs": "Jobs (sensors + API fetch)",
+        "ingresses": "Ingresses (count + panel data)",
+        "services": "Services (count + panel data)",
+        "metrics": "CPU/memory metrics (Metrics API)",
+        "counts": "Aggregate count sensors"
+      }
+    }
+  },
+  "services": {
+    "scale_workload": {
+      "name": "Scale Workload",
+      "description": "Scale one or more Kubernetes workloads (Deployments/StatefulSets) to the specified number of replicas.",
+      "fields": {
+        "workload_name": {
+          "name": "Workload Name",
+          "description": "The name of a single workload to scale (use workload_names for multiple)."
+        },
+        "workload_names": {
+          "name": "Workload Names",
+          "description": "A list of workload names to scale (use workload_name for single)."
+        },
+        "replicas": {
+          "name": "Replicas",
+          "description": "The number of replicas to scale to (0 or more)."
+        },
+        "namespace": {
+          "name": "Namespace",
+          "description": "The namespace containing the workload(s) (optional, defaults to configured namespace)."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    },
+    "start_workload": {
+      "name": "Start Workload",
+      "description": "Start one or more Kubernetes workloads by scaling them to the specified number of replicas, or trigger CronJobs (creates a job immediately).",
+      "fields": {
+        "workload_name": {
+          "name": "Workload Name",
+          "description": "The name of a single workload to start (use workload_names for multiple)."
+        },
+        "workload_names": {
+          "name": "Workload Names",
+          "description": "A list of workload names to start (use workload_name for single)."
+        },
+        "replicas": {
+          "name": "Replicas",
+          "description": "The number of replicas to scale to for Deployments/StatefulSets (1 or more, defaults to 1). Ignored for CronJobs."
+        },
+        "namespace": {
+          "name": "Namespace",
+          "description": "The namespace containing the workload(s) (optional, defaults to configured namespace)."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    },
+    "stop_workload": {
+      "name": "Stop Workload",
+      "description": "Stop one or more Kubernetes workloads by scaling them to 0 replicas (Deployments/StatefulSets). CronJobs are not affected - use the switch entity to suspend them.",
+      "fields": {
+        "workload_name": {
+          "name": "Workload Name",
+          "description": "The name of a single workload to stop (use workload_names for multiple)."
+        },
+        "workload_names": {
+          "name": "Workload Names",
+          "description": "A list of workload names to stop (use workload_name for single)."
+        },
+        "namespace": {
+          "name": "Namespace",
+          "description": "The namespace containing the workload(s) (optional, defaults to configured namespace)."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    },
+    "restart_workload": {
+      "name": "Restart Workload",
+      "description": "Perform a rolling restart of one or more Kubernetes workloads (Deployments/StatefulSets/DaemonSets). Equivalent to \"kubectl rollout restart\".",
+      "fields": {
+        "workload_name": {
+          "name": "Workload Name",
+          "description": "The name of a single workload to restart (use workload_names for multiple)."
+        },
+        "workload_names": {
+          "name": "Workload Names",
+          "description": "A list of workload names to restart (use workload_name for single)."
+        },
+        "namespace": {
+          "name": "Namespace",
+          "description": "The namespace containing the workload(s) (optional, defaults to configured namespace)."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    },
+    "delete_job": {
+      "name": "Delete Job",
+      "description": "Delete one or more Kubernetes Jobs (also deletes their pods). Useful for clearing failed Jobs.",
+      "fields": {
+        "job_name": {
+          "name": "Job Name",
+          "description": "The name of a single Job to delete (use job_names for multiple)."
+        },
+        "job_names": {
+          "name": "Job Names",
+          "description": "A list of Job names to delete (use job_name for a single Job)."
+        },
+        "namespace": {
+          "name": "Namespace",
+          "description": "The namespace of the Job(s). If omitted, it is resolved from monitored data, then the configured default."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    },
+    "cordon_node": {
+      "name": "Cordon Node",
+      "description": "Cordon one or more Kubernetes nodes (mark them unschedulable). Running pods are not evicted; new pods will not be scheduled onto the node.",
+      "fields": {
+        "node_name": {
+          "name": "Node Name",
+          "description": "The name of a single node to cordon (use node_names for multiple)."
+        },
+        "node_names": {
+          "name": "Node Names",
+          "description": "A list of node names to cordon (use node_name for a single node)."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    },
+    "uncordon_node": {
+      "name": "Uncordon Node",
+      "description": "Uncordon one or more Kubernetes nodes (mark them schedulable again).",
+      "fields": {
+        "node_name": {
+          "name": "Node Name",
+          "description": "The name of a single node to uncordon (use node_names for multiple)."
+        },
+        "node_names": {
+          "name": "Node Names",
+          "description": "A list of node names to uncordon (use node_name for a single node)."
+        },
+        "entry_id": {
+          "name": "Config Entry ID",
+          "description": "Target a specific configured cluster (optional; defaults to the first)."
+        }
+      }
+    }
+  },
+  "issues": {
+    "kubernetes_package_missing": {
+      "title": "Kubernetes Python package is not installed",
+      "description": "The integration requires the official `kubernetes` Python package, which is normally installed automatically. If you see this message, your Home Assistant installation is missing the dependency. Restart Home Assistant or reinstall the integration to retry."
+    },
+    "metrics_server_unavailable": {
+      "title": "Metrics server unavailable for {cluster}",
+      "description": "The cluster `{cluster}` did not return CPU/memory metrics. Either the metrics-server addon is not installed, or the integration's ClusterRole is missing `get`/`list` permissions on the `metrics.k8s.io` API. Install metrics-server (see the Learn more link) or grant the additional RBAC permissions. This message clears automatically once metrics are returned."
+    },
+    "watch_connection_failing": {
+      "title": "Watch connection failing for {cluster}",
+      "description": "The integration's watch/event-stream connection to cluster `{cluster}` has failed repeatedly and is retrying with backoff (used by the Watch API and the cluster event stream). Live updates may be delayed while the connection retries; the integration falls back to regular interval polling in the meantime, so data stays current. Check that the cluster API is reachable and that the ServiceAccount has `watch` permission (granted by manifests/full/ — not by manifests/minimal/). To use interval polling only, disable the Watch API under Configure. This message clears automatically once the watch reconnects, or when both the Watch API and the Cluster events platform are disabled."
+    },
+    "watch_forbidden": {
+      "title": "Missing permissions for {resources} on {cluster}",
+      "description": "The ServiceAccount used for cluster `{cluster}` is not allowed to list or watch: {resources} (HTTP 403 Forbidden). Real-time updates for these resources are off, and the related count sensors and panel views show no data. Grant `get`, `list` and `watch` on them — the chart's `full` mode and manifests/full/ already do (run `helm upgrade` or re-apply the manifests) — the integration retries every minute and this message clears on its own once access works again (a short-lived 403 right after an API server restart resolves the same way). To use interval polling only, disable the Watch API under Configure."
+    }
+  }
+}

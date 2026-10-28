@@ -1,0 +1,817 @@
+"""Services for the Kubernetes integration."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable
+import logging
+from typing import Any
+
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
+
+from .const import (
+    ATTR_JOB_NAME,
+    ATTR_JOB_NAMES,
+    ATTR_NAMESPACE,
+    ATTR_NODE_NAME,
+    ATTR_NODE_NAMES,
+    ATTR_REPLICAS,
+    ATTR_WORKLOAD_NAME,
+    ATTR_WORKLOAD_NAMES,
+    ATTR_WORKLOAD_TYPE,
+    DOMAIN,
+    SERVICE_CORDON_NODE,
+    SERVICE_DELETE_JOB,
+    SERVICE_RESTART_WORKLOAD,
+    SERVICE_SCALE_WORKLOAD,
+    SERVICE_START_WORKLOAD,
+    SERVICE_STOP_WORKLOAD,
+    SERVICE_UNCORDON_NODE,
+    WORKLOAD_TYPE_CRONJOB,
+    WORKLOAD_TYPE_DAEMONSET,
+    WORKLOAD_TYPE_DEPLOYMENT,
+    WORKLOAD_TYPE_STATEFULSET,
+)
+from .coordinator import KubernetesEntryData, get_loaded_entries
+
+_LOGGER = logging.getLogger(__name__)
+_LOGGER.debug("Kubernetes services module loaded")
+
+
+def _get_workload_info_from_entity(
+    hass: HomeAssistant, entity_id_or_name: str
+) -> tuple[str | None, str | None, str | None]:
+    """Get namespace, workload name, and workload type from entity attributes.
+
+    Returns:
+        Tuple of (namespace, workload_name, workload_type)
+    """
+    try:
+        # If it's already an entity ID, use it directly
+        if entity_id_or_name.startswith("switch."):
+            entity_id = entity_id_or_name
+        else:
+            # Try to find the entity by name
+            entity_id = f"switch.{entity_id_or_name}"
+
+        entity = hass.states.get(entity_id)
+        if entity and entity.attributes:
+            namespace = entity.attributes.get("namespace")
+            workload_type = entity.attributes.get(ATTR_WORKLOAD_TYPE)
+            deployment_name = entity.attributes.get("deployment_name")
+            statefulset_name = entity.attributes.get("statefulset_name")
+            cronjob_name = entity.attributes.get("cronjob_name")
+            workload_name = deployment_name or statefulset_name or cronjob_name
+
+            _LOGGER.debug(
+                "Found namespace %s, workload_name %s, workload_type %s for entity %s",
+                namespace,
+                workload_name,
+                workload_type,
+                entity_id,
+            )
+            return namespace, workload_name, workload_type
+        else:
+            _LOGGER.debug("Entity %s not found or has no attributes", entity_id)
+            return None, None, None
+    except Exception as e:
+        _LOGGER.debug(
+            "Error getting workload info for entity %s: %s", entity_id_or_name, e
+        )
+        return None, None, None
+
+
+def _resolve_raw_workload_name(
+    hass: HomeAssistant, name: str, namespace: str | None
+) -> tuple[str, str | None, str] | None:
+    """Resolve a raw workload name to (name, namespace, workload_type) via coordinator data.
+
+    Searches all coordinator data for a matching workload by name and optional namespace.
+    """
+    resource_type_map = {
+        "deployments": WORKLOAD_TYPE_DEPLOYMENT,
+        "statefulsets": WORKLOAD_TYPE_STATEFULSET,
+        "daemonsets": WORKLOAD_TYPE_DAEMONSET,
+        "cronjobs": WORKLOAD_TYPE_CRONJOB,
+    }
+
+    for entry in get_loaded_entries(hass):
+        coordinator = entry.runtime_data.coordinator
+        if not coordinator.data:
+            continue
+
+        for resource_key, workload_type in resource_type_map.items():
+            for _wl_name, wl_data in coordinator.data.get(resource_key, {}).items():
+                if wl_data.get("name") != name:
+                    continue
+                wl_ns = wl_data.get("namespace")
+                if namespace and wl_ns != namespace:
+                    continue
+                _LOGGER.debug(
+                    "Resolved raw workload name '%s' to type %s in namespace %s",
+                    name,
+                    workload_type,
+                    wl_ns,
+                )
+                return (name, wl_ns, workload_type)
+
+    _LOGGER.debug("Could not resolve raw workload name '%s' in coordinator data", name)
+    return None
+
+
+def _normalize_entity_id_list(entity_ids_raw: Any) -> list[str]:
+    """Normalize entity_id from service call to a list of non-empty strings.
+
+    Handles: list of ids, single string, or comma-separated string (e.g. from UI).
+    """
+    if entity_ids_raw is None:
+        return []
+    if isinstance(entity_ids_raw, list):
+        return [s.strip() for s in entity_ids_raw if isinstance(s, str) and s.strip()]
+    if isinstance(entity_ids_raw, str):
+        return [s.strip() for s in entity_ids_raw.split(",") if s.strip()]
+    return []
+
+
+def _extract_entity_ids_from_value(value: Any) -> list[str]:
+    """Extract entity ID strings from a value that may be a string, list, or dict.
+
+    Handles all the formats that HA service calls can produce:
+    - "switch.foo" (plain string)
+    - ["switch.foo", "switch.bar"] (list of strings)
+    - {"entity_id": "switch.foo"} or {"entity_ids": ["switch.foo"]}
+    - [{"entity_id": "switch.foo"}, "switch.bar"] (mixed list)
+    """
+    if isinstance(value, str):
+        return _normalize_entity_id_list(value)
+    if isinstance(value, dict):
+        raw = value.get("entity_id") or value.get("entity_ids")
+        return _normalize_entity_id_list(raw)
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                result.append(item.strip())
+            elif isinstance(item, dict):
+                raw = item.get("entity_id") or item.get("entity_ids")
+                result.extend(_normalize_entity_id_list(raw))
+        return [s for s in result if s]
+    return []
+
+
+def _collect_entity_ids(call_data: dict[str, Any]) -> list[str]:
+    """Collect all entity IDs from service call data, regardless of format.
+
+    Checks ATTR_WORKLOAD_NAMES, then falls back to top-level "target".
+    Filters to switch entities only.
+    """
+    entity_ids: list[str] = []
+
+    if ATTR_WORKLOAD_NAMES in call_data:
+        entity_ids = _extract_entity_ids_from_value(call_data[ATTR_WORKLOAD_NAMES])
+
+    if not entity_ids and "target" in call_data:
+        entity_ids = _extract_entity_ids_from_value(call_data["target"])
+
+    return [eid for eid in entity_ids if eid.startswith("switch.")]
+
+
+def _extract_workload_info(
+    call_data: dict[str, Any], hass: HomeAssistant
+) -> list[tuple[str, str | None, str]]:
+    """Extract workload information (name, namespace, workload_type) from service call data.
+
+    Returns:
+        List of tuples: [(workload_name, namespace, workload_type), ...]
+    """
+    workloads: list[tuple[str, str | None, str]] = []
+
+    _LOGGER.debug("Extracting workload info from call data: %s", call_data)
+
+    # Resolve entity IDs from workload_names / target
+    for entity_id in _collect_entity_ids(call_data):
+        namespace, workload_name, workload_type = _get_workload_info_from_entity(
+            hass, entity_id
+        )
+        if workload_name and workload_type:
+            workloads.append((workload_name, namespace, workload_type))
+        else:
+            _LOGGER.warning(
+                "Failed to extract workload info from entity %s: namespace=%s, workload_name=%s, workload_type=%s",
+                entity_id,
+                namespace,
+                workload_name,
+                workload_type,
+            )
+
+    # Check for workload_name (single select)
+    if ATTR_WORKLOAD_NAME in call_data:
+        name = call_data[ATTR_WORKLOAD_NAME]
+        _LOGGER.debug("Found workload_name: %s (type: %s)", name, type(name))
+
+        # Extract entity ID from dict wrapper if needed
+        if isinstance(name, dict) and "entity_id" in name:
+            name = name["entity_id"]
+
+        if isinstance(name, str):
+            namespace, workload_name, workload_type = _get_workload_info_from_entity(
+                hass, name
+            )
+            if workload_name and workload_type:
+                workloads.append((workload_name, namespace, workload_type))
+            else:
+                # Try resolving as a raw workload name via coordinator data
+                provided_ns = call_data.get(ATTR_NAMESPACE)
+                resolved = _resolve_raw_workload_name(hass, name, provided_ns)
+                if resolved:
+                    workloads.append(resolved)
+                else:
+                    _LOGGER.warning(
+                        "Failed to extract workload info from entity %s: namespace=%s, workload_name=%s, workload_type=%s",
+                        name,
+                        namespace,
+                        workload_name,
+                        workload_type,
+                    )
+
+    # Use provided namespace if available
+    provided_namespace = call_data.get(ATTR_NAMESPACE)
+    if provided_namespace:
+        _LOGGER.debug(
+            "Using provided namespace: %s for all workloads", provided_namespace
+        )
+        workloads = [(name, provided_namespace, wtype) for name, _, wtype in workloads]
+
+    _LOGGER.debug("Extracted workloads: %s", workloads)
+    return workloads
+
+
+def _no_workloads_error(
+    call_data: dict[str, Any], service_name: str
+) -> ServiceValidationError:
+    """Build the error raised when no valid workloads could be extracted."""
+    entity_ids_snippet: list[str] = []
+    for key in (ATTR_WORKLOAD_NAMES, ATTR_WORKLOAD_NAME):
+        val = call_data.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str):
+            entity_ids_snippet.append(val)
+        elif isinstance(val, list):
+            entity_ids_snippet.extend([v for v in val if isinstance(v, str)][:5])
+        elif isinstance(val, dict) and "entity_id" in val:
+            eid = val["entity_id"]
+            if isinstance(eid, str):
+                entity_ids_snippet.append(eid)
+            elif isinstance(eid, list):
+                entity_ids_snippet.extend([v for v in eid if isinstance(v, str)][:5])
+        if entity_ids_snippet:
+            break
+    sample = entity_ids_snippet[:5] if entity_ids_snippet else ["(none)"]
+    return ServiceValidationError(
+        f"No valid workloads found for {service_name}. Requested: "
+        f"{', '.join(sample)}. Ensure workload_name/workload_names reference "
+        "entities that exist (e.g. switch.xxx) and that those switches expose "
+        "namespace and workload_type attributes."
+    )
+
+
+def _validate_workload_types(
+    workloads: list[tuple[str, str | None, str]],
+    supported: tuple[str, ...],
+    operation: str,
+    hint: str = "",
+) -> None:
+    """Raise when any workload's type does not support *operation*."""
+    unsupported = [
+        f"{name} ({wtype})" for name, _, wtype in workloads if wtype not in supported
+    ]
+    if unsupported:
+        raise ServiceValidationError(
+            f"Cannot {operation} {', '.join(unsupported)}: only "
+            f"{', '.join(supported)} are supported.{hint}"
+        )
+
+
+async def _attempt(
+    action: Awaitable[Any], label: str, failures: list[str]
+) -> Any | None:
+    """Await *action*, recording *label* in *failures* when it does not succeed.
+
+    Accepts both the ``bool`` returned by most client methods and the
+    ``{"success": ...}`` dict returned by ``trigger_cronjob``. Returns the
+    result on success and ``None`` otherwise, so callers never abort the
+    remaining targets of a multi-target service call.
+    """
+    try:
+        result = await action
+    except Exception as err:
+        failures.append(f"{label}: {err}")
+        return None
+    if isinstance(result, dict):
+        if result.get("success"):
+            return result
+        failures.append(f"{label}: {result.get('error', 'Unknown error')}")
+        return None
+    if not result:
+        failures.append(label)
+        return None
+    return result
+
+
+def _raise_failures(failures: list[str], operation: str) -> None:
+    """Raise a single error naming every target the operation failed for."""
+    if failures:
+        raise HomeAssistantError(f"Failed to {operation}: {'; '.join(failures)}")
+
+
+def _validate_workload_schema(data: dict) -> dict:
+    """Validate that at least one workload field is provided."""
+    if ATTR_WORKLOAD_NAME not in data and ATTR_WORKLOAD_NAMES not in data:
+        raise vol.Invalid("Either workload_name or workload_names must be provided")
+    return data
+
+
+def _validate_job_schema(data: dict[str, Any]) -> dict[str, Any]:
+    """Require at least one of job_name / job_names for delete_job."""
+    if ATTR_JOB_NAME not in data and ATTR_JOB_NAMES not in data:
+        raise vol.Invalid("Either job_name or job_names must be provided")
+    return data
+
+
+def _validate_node_schema(data: dict[str, Any]) -> dict[str, Any]:
+    """Require at least one of node_name / node_names for node services."""
+    if ATTR_NODE_NAME not in data and ATTR_NODE_NAMES not in data:
+        raise vol.Invalid("Either node_name or node_names must be provided")
+    return data
+
+
+# Generic service schemas
+SCALE_WORKLOAD_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_WORKLOAD_NAME): vol.Any(cv.string, dict),
+            vol.Optional(ATTR_WORKLOAD_NAMES): vol.Any(
+                cv.string,
+                vol.All(cv.ensure_list, [vol.Any(cv.string, dict)]),
+                vol.All(cv.ensure_list, [cv.string]),
+                dict,
+            ),
+            vol.Required(ATTR_REPLICAS): vol.All(vol.Coerce(int), vol.Range(min=0)),
+            vol.Optional(ATTR_NAMESPACE): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        },
+        _validate_workload_schema,
+    )
+)
+
+START_WORKLOAD_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_WORKLOAD_NAME): vol.Any(cv.string, dict),
+            vol.Optional(ATTR_WORKLOAD_NAMES): vol.Any(
+                cv.string,
+                vol.All(cv.ensure_list, [vol.Any(cv.string, dict)]),
+                vol.All(cv.ensure_list, [cv.string]),
+                dict,
+            ),
+            vol.Optional(ATTR_REPLICAS, default=1): vol.All(
+                vol.Coerce(int), vol.Range(min=1)
+            ),
+            vol.Optional(ATTR_NAMESPACE): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        },
+        _validate_workload_schema,
+    )
+)
+
+STOP_WORKLOAD_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_WORKLOAD_NAME): vol.Any(cv.string, dict),
+            vol.Optional(ATTR_WORKLOAD_NAMES): vol.Any(
+                cv.string,
+                vol.All(cv.ensure_list, [vol.Any(cv.string, dict)]),
+                vol.All(cv.ensure_list, [cv.string]),
+                dict,
+            ),
+            vol.Optional(ATTR_NAMESPACE): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        },
+        _validate_workload_schema,
+    )
+)
+
+RESTART_WORKLOAD_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_WORKLOAD_NAME): vol.Any(cv.string, dict),
+            vol.Optional(ATTR_WORKLOAD_NAMES): vol.Any(
+                cv.string,
+                vol.All(cv.ensure_list, [vol.Any(cv.string, dict)]),
+                vol.All(cv.ensure_list, [cv.string]),
+                dict,
+            ),
+            vol.Optional(ATTR_NAMESPACE): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        },
+        _validate_workload_schema,
+    )
+)
+
+DELETE_JOB_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_JOB_NAME): cv.string,
+            vol.Optional(ATTR_JOB_NAMES): vol.Any(
+                cv.string,
+                vol.All(cv.ensure_list, [cv.string]),
+            ),
+            vol.Optional(ATTR_NAMESPACE): cv.string,
+            vol.Optional("entry_id"): cv.string,
+        },
+        _validate_job_schema,
+    )
+)
+
+NODE_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_NODE_NAME): cv.string,
+            vol.Optional(ATTR_NODE_NAMES): vol.Any(
+                cv.string,
+                vol.All(cv.ensure_list, [cv.string]),
+            ),
+            vol.Optional("entry_id"): cv.string,
+        },
+        _validate_node_schema,
+    )
+)
+
+
+def _collect_names(
+    call_data: dict[str, Any], single_key: str, multi_key: str
+) -> list[str]:
+    """Collect names from call data (single and/or multi key), deduped, order-preserving."""
+    seen: set[str] = set()
+    result: list[str] = []
+
+    def _add(name: str) -> None:
+        name = name.strip()
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+
+    single = call_data.get(single_key)
+    if single:
+        _add(single)
+
+    multi = call_data.get(multi_key)
+    if multi:
+        if isinstance(multi, str):
+            _add(multi)
+        else:
+            for name in multi:
+                _add(name)
+
+    return result
+
+
+def _collect_node_names(call_data: dict[str, Any]) -> list[str]:
+    """Collect node names from call data (node_name and/or node_names)."""
+    return _collect_names(call_data, ATTR_NODE_NAME, ATTR_NODE_NAMES)
+
+
+def _collect_job_names(call_data: dict[str, Any]) -> list[str]:
+    """Collect job names from call data (job_name and/or job_names), deduped, order-preserving."""
+    return _collect_names(call_data, ATTR_JOB_NAME, ATTR_JOB_NAMES)
+
+
+def _get_entry_data(
+    hass: HomeAssistant, call_data: dict[str, Any]
+) -> KubernetesEntryData:
+    """Get the runtime data for a service call.
+
+    If ``entry_id`` is provided in *call_data* it must match a loaded config
+    entry.  Otherwise the first loaded entry is used.
+
+    Raises:
+        ServiceValidationError: when no loaded config entry matches.
+    """
+    entries = get_loaded_entries(hass)
+
+    entry_id = call_data.get("entry_id")
+    if entry_id:
+        for entry in entries:
+            if entry.entry_id == entry_id:
+                return entry.runtime_data
+        raise ServiceValidationError(
+            f"No loaded Kubernetes config entry with entry_id '{entry_id}'"
+        )
+
+    # Fallback: first loaded config entry
+    if entries:
+        return entries[0].runtime_data
+    raise ServiceValidationError("No Kubernetes integration configured")
+
+
+async def async_setup_services(hass: HomeAssistant) -> None:
+    """Set up the Kubernetes services."""
+    _LOGGER.debug("Setting up Kubernetes services")
+
+    # Generic service handlers
+    async def scale_workload(call: ServiceCall) -> None:
+        """Scale one or more Kubernetes workloads to the specified number of replicas."""
+        workloads = _extract_workload_info(call.data, hass)
+
+        if not workloads:
+            raise _no_workloads_error(call.data, "scale_workload")
+
+        _validate_workload_types(
+            workloads,
+            (WORKLOAD_TYPE_DEPLOYMENT, WORKLOAD_TYPE_STATEFULSET),
+            "scale",
+        )
+
+        replicas = call.data[ATTR_REPLICAS]
+
+        entry_data = _get_entry_data(hass, call.data)
+        config_data = entry_data.config
+        client = entry_data.coordinator.client
+        scale_methods = {
+            WORKLOAD_TYPE_DEPLOYMENT: client.scale_deployment,
+            WORKLOAD_TYPE_STATEFULSET: client.scale_statefulset,
+        }
+        failures: list[str] = []
+
+        for workload_name, raw_namespace, workload_type in workloads:
+            namespace = raw_namespace or config_data.get("namespace", "default")
+            label = f"{workload_type} {namespace}/{workload_name}"
+
+            if await _attempt(
+                scale_methods[workload_type](workload_name, replicas, namespace),
+                label,
+                failures,
+            ):
+                _LOGGER.info("Successfully scaled %s to %d replicas", label, replicas)
+
+        _raise_failures(failures, "scale")
+
+        if len(workloads) > 1:
+            _LOGGER.info("Completed scaling operation for %d workloads", len(workloads))
+
+    async def start_workload(call: ServiceCall) -> None:
+        """Start one or more Kubernetes workloads by scaling to specified replicas, or trigger CronJobs."""
+        workloads = _extract_workload_info(call.data, hass)
+
+        if not workloads:
+            raise _no_workloads_error(call.data, "start_workload")
+
+        _validate_workload_types(
+            workloads,
+            (
+                WORKLOAD_TYPE_DEPLOYMENT,
+                WORKLOAD_TYPE_STATEFULSET,
+                WORKLOAD_TYPE_CRONJOB,
+            ),
+            "start",
+        )
+
+        replicas = call.data.get(ATTR_REPLICAS, 1)
+
+        entry_data = _get_entry_data(hass, call.data)
+        config_data = entry_data.config
+        client = entry_data.coordinator.client
+        start_methods = {
+            WORKLOAD_TYPE_DEPLOYMENT: client.start_deployment,
+            WORKLOAD_TYPE_STATEFULSET: client.start_statefulset,
+        }
+        failures: list[str] = []
+
+        for workload_name, raw_namespace, workload_type in workloads:
+            namespace = raw_namespace or config_data.get("namespace", "default")
+            label = f"{workload_type} {namespace}/{workload_name}"
+
+            if workload_type == WORKLOAD_TYPE_CRONJOB:
+                # For CronJobs, "start" means trigger (create a job from the CronJob)
+                result = await _attempt(
+                    client.trigger_cronjob(workload_name, namespace), label, failures
+                )
+                if result:
+                    _LOGGER.info(
+                        "Successfully triggered %s, created job %s",
+                        label,
+                        result.get("job_name", "unknown"),
+                    )
+            elif await _attempt(
+                start_methods[workload_type](workload_name, replicas, namespace),
+                label,
+                failures,
+            ):
+                _LOGGER.info(
+                    "Successfully started %s with %d replicas", label, replicas
+                )
+
+        _raise_failures(failures, "start")
+
+        if len(workloads) > 1:
+            _LOGGER.info("Completed start operation for %d workloads", len(workloads))
+
+    async def stop_workload(call: ServiceCall) -> None:
+        """Stop one or more Kubernetes workloads by scaling to 0 (Deployments/StatefulSets only)."""
+        workloads = _extract_workload_info(call.data, hass)
+
+        if not workloads:
+            raise _no_workloads_error(call.data, "stop_workload")
+
+        _validate_workload_types(
+            workloads,
+            (WORKLOAD_TYPE_DEPLOYMENT, WORKLOAD_TYPE_STATEFULSET),
+            "stop",
+            hint=" Use the switch entity to suspend CronJobs.",
+        )
+
+        entry_data = _get_entry_data(hass, call.data)
+        config_data = entry_data.config
+        client = entry_data.coordinator.client
+        stop_methods = {
+            WORKLOAD_TYPE_DEPLOYMENT: client.stop_deployment,
+            WORKLOAD_TYPE_STATEFULSET: client.stop_statefulset,
+        }
+        failures: list[str] = []
+
+        for workload_name, raw_namespace, workload_type in workloads:
+            namespace = raw_namespace or config_data.get("namespace", "default")
+            label = f"{workload_type} {namespace}/{workload_name}"
+
+            if await _attempt(
+                stop_methods[workload_type](workload_name, namespace), label, failures
+            ):
+                _LOGGER.info("Successfully stopped %s", label)
+
+        _raise_failures(failures, "stop")
+
+        if len(workloads) > 1:
+            _LOGGER.info("Completed stop operation for %d workloads", len(workloads))
+
+    async def restart_workload(call: ServiceCall) -> None:
+        """Perform a rollout restart of one or more Kubernetes workloads."""
+        workloads = _extract_workload_info(call.data, hass)
+
+        if not workloads:
+            raise _no_workloads_error(call.data, "restart_workload")
+
+        _validate_workload_types(
+            workloads,
+            (
+                WORKLOAD_TYPE_DEPLOYMENT,
+                WORKLOAD_TYPE_STATEFULSET,
+                WORKLOAD_TYPE_DAEMONSET,
+            ),
+            "restart",
+        )
+
+        entry_data = _get_entry_data(hass, call.data)
+        config_data = entry_data.config
+        client = entry_data.coordinator.client
+
+        restart_methods = {
+            WORKLOAD_TYPE_DEPLOYMENT: client.rollout_restart_deployment,
+            WORKLOAD_TYPE_STATEFULSET: client.rollout_restart_statefulset,
+            WORKLOAD_TYPE_DAEMONSET: client.rollout_restart_daemonset,
+        }
+        failures: list[str] = []
+
+        for workload_name, raw_namespace, workload_type in workloads:
+            namespace = raw_namespace or config_data.get("namespace", "default")
+            label = f"{workload_type} {namespace}/{workload_name}"
+
+            if await _attempt(
+                restart_methods[workload_type](workload_name, namespace),
+                label,
+                failures,
+            ):
+                _LOGGER.info("Successfully restarted %s", label)
+
+        _raise_failures(failures, "restart")
+
+        if len(workloads) > 1:
+            _LOGGER.info("Completed restart operation for %d workloads", len(workloads))
+
+    async def delete_job(call: ServiceCall) -> None:
+        """Delete one or more Kubernetes Jobs (cascades to their pods)."""
+        job_names = _collect_job_names(call.data)
+        if not job_names:
+            raise ServiceValidationError(
+                "delete_job requires at least one non-empty job name"
+            )
+        entry_data = _get_entry_data(hass, call.data)
+        coordinator = entry_data.coordinator
+        client = coordinator.client
+        config_data = entry_data.config
+        provided_ns = call.data.get(ATTR_NAMESPACE)
+        failures: list[str] = []
+        for job_name in job_names:
+            namespace = provided_ns
+            if not namespace:
+                # Search monitored jobs by name (keys are "{namespace}_{name}")
+                job_data = next(
+                    (
+                        job
+                        for job in (coordinator.data or {}).get("jobs", {}).values()
+                        if job.get("name") == job_name
+                    ),
+                    None,
+                )
+                namespace = (
+                    job_data.get("namespace")
+                    if job_data
+                    else config_data.get("namespace", "default")
+                )
+            label = f"job {namespace}/{job_name}"
+            if await _attempt(client.delete_job(job_name, namespace), label, failures):
+                _LOGGER.info("Successfully deleted %s", label)
+
+        _raise_failures(failures, "delete")
+
+    async def _set_nodes_schedulable(call: ServiceCall, schedulable: bool) -> None:
+        """Cordon or uncordon one or more Kubernetes nodes."""
+        action = "uncordon" if schedulable else "cordon"
+        node_names = _collect_node_names(call.data)
+        if not node_names:
+            raise ServiceValidationError(
+                f"{action}_node requires at least one non-empty node name"
+            )
+        entry_data = _get_entry_data(hass, call.data)
+        coordinator = entry_data.coordinator
+        client = coordinator.client
+        cordon_fn = client.uncordon_node if schedulable else client.cordon_node
+        any_success = False
+        failures: list[str] = []
+        for node_name in node_names:
+            if await _attempt(cordon_fn(node_name), f"node {node_name}", failures):
+                any_success = True
+                _LOGGER.info("Successfully %sed node %s", action, node_name)
+        if any_success:
+            await coordinator.async_request_refresh()
+        _raise_failures(failures, action)
+
+    async def cordon_node(call: ServiceCall) -> None:
+        """Cordon one or more Kubernetes nodes (mark unschedulable)."""
+        await _set_nodes_schedulable(call, schedulable=False)
+
+    async def uncordon_node(call: ServiceCall) -> None:
+        """Uncordon one or more Kubernetes nodes (mark schedulable)."""
+        await _set_nodes_schedulable(call, schedulable=True)
+
+    # Register the generic services
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SCALE_WORKLOAD,
+        scale_workload,
+        schema=SCALE_WORKLOAD_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_START_WORKLOAD,
+        start_workload,
+        schema=START_WORKLOAD_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_STOP_WORKLOAD,
+        stop_workload,
+        schema=STOP_WORKLOAD_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESTART_WORKLOAD,
+        restart_workload,
+        schema=RESTART_WORKLOAD_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DELETE_JOB,
+        delete_job,
+        schema=DELETE_JOB_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CORDON_NODE,
+        cordon_node,
+        schema=NODE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UNCORDON_NODE,
+        uncordon_node,
+        schema=NODE_SCHEMA,
+    )

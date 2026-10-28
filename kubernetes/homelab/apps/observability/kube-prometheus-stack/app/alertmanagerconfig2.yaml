@@ -1,0 +1,11 @@
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: alertmanager
+  namespace: observability
+spec:
+  route:
+    receiver: "default"
+  receivers:
+    - name: "default"

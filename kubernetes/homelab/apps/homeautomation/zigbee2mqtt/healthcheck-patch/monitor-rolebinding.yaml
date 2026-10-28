@@ -1,0 +1,14 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zigbee2mqtt-monitor
+  namespace: homeautomation
+subjects:
+  - kind: ServiceAccount
+    name: zigbee2mqtt-monitor
+    namespace: homeautomation
+roleRef:
+  kind: Role
+  name: zigbee2mqtt-monitor
+  apiGroup: rbac.authorization.k8s.io

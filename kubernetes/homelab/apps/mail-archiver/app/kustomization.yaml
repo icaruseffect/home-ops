@@ -1,0 +1,13 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mail-archiver
+
+resources:
+  - namespace.yaml
+  - configmap-app.yaml
+  - secret-app.sops.yaml
+  - deployment-app.yaml
+  - service-app.yaml
+  - ingress.yaml

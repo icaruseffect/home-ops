@@ -1,0 +1,74 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zigbee2mqtt
+  namespace: homeautomation
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: zigbee2mqtt
+      version: "9.x" # Use major version to automatically get updates within the major version
+      sourceRef:
+        kind: HelmRepository
+        name: andrenarchy-charts
+        namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    image:
+      repository: ghcr.io/koenkk/zigbee2mqtt
+      tag: 2.6.0
+    priorityClassName: homelab-important
+    # Guaranteed QoS (request == limit): actual usage is ~120Mi, so 256Mi
+    # is real headroom, not padding.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+    env:
+      ZIGBEE2MQTT_DATA: /data
+      Z2M_WATCHDOG: "0.5,1,2,3,6,15"
+    securityContext:
+      privileged: true
+    persistence:
+      data:
+        enabled: true
+        existingClaim: zigbee2mqtt-data
+      usb:
+        enabled: true
+        type: hostPath
+        hostPath: /dev/serial/by-id/usb-Silicon_Labs_slae.sh_cc2652rb_stick_-_slaesh_s_iot_stuff_00_12_4B_00_23_93_22_DA-if00-port0
+        mountPath: /dev/ttyACM0
+    additionalVolumeMounts:
+      - name: zigbee2mqtt-settings
+        mountPath: /app/configuration.yaml
+        subPath: configuration.yaml
+    additionalVolumes:
+      - name: zigbee2mqtt-settings
+        configMap:
+          name: zigbee2mqtt-settings
+    initContainers:
+      init-config:
+        image: busybox
+        imagePullPolicy: Always
+        command:
+          - sh
+          - -c
+          - if [ ! -f /data/configuration.yaml ]; then cp /app/configuration.yaml /data/; else echo "configuration.yaml already exists in /data"; fi
+        volumeMounts:
+          - name: data
+            mountPath: /data
+  valuesFrom:
+    - kind: ConfigMap
+      name: zigbee2mqtt-values
+      valuesKey: zigbee2mqtt-values.yaml

@@ -1,0 +1,933 @@
+"""Config flow for Kubernetes integration."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+import logging
+import os
+from pathlib import Path
+import sys
+from typing import Any
+
+import aiohttp
+from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import AbortFlow
+from homeassistant.helpers import selector
+from homeassistant.helpers.selector import SelectOptionDict
+import voluptuous as vol
+
+from .const import (
+    CONF_API_TOKEN,
+    CONF_CA_CERT,
+    CONF_CLUSTER_NAME,
+    CONF_DEVICE_GROUPING_MODE,
+    CONF_DISABLED_RESOURCES,
+    CONF_ENABLE_EVENTS,
+    CONF_ENABLE_PANEL,
+    CONF_ENABLE_WATCH,
+    CONF_EVENT_TYPES,
+    CONF_EXCLUDE_JOB_PODS,
+    CONF_MONITOR_ALL_NAMESPACES,
+    CONF_NAMESPACE,
+    CONF_SCALE_COOLDOWN,
+    CONF_SCALE_VERIFICATION_TIMEOUT,
+    CONF_SWITCH_UPDATE_INTERVAL,
+    CONF_USE_IN_CLUSTER,
+    CONF_VERIFY_SSL,
+    DEFAULT_CLUSTER_NAME,
+    DEFAULT_DEVICE_GROUPING_MODE,
+    DEFAULT_ENABLE_EVENTS,
+    DEFAULT_ENABLE_PANEL,
+    DEFAULT_ENABLE_WATCH,
+    DEFAULT_EVENT_TYPES,
+    DEFAULT_EXCLUDE_JOB_PODS,
+    DEFAULT_MONITOR_ALL_NAMESPACES,
+    DEFAULT_NAMESPACE,
+    DEFAULT_PORT,
+    DEFAULT_SCALE_COOLDOWN,
+    DEFAULT_SCALE_VERIFICATION_TIMEOUT,
+    DEFAULT_SWITCH_UPDATE_INTERVAL,
+    DEFAULT_USE_IN_CLUSTER,
+    DEFAULT_VERIFY_SSL,
+    DEVICE_GROUPING_MODE_CLUSTER,
+    DEVICE_GROUPING_MODE_NAMESPACE,
+    DISABLABLE_RESOURCES,
+    DOMAIN,
+    EVENT_TYPES_ALL,
+    EVENT_TYPES_WARNING,
+    IN_CLUSTER_CA_PATH,
+    IN_CLUSTER_TOKEN_PATH,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+# Global variables for lazy import
+KUBERNETES_AVAILABLE: bool | None = None
+client: Any | None = None
+ApiException: type = Exception
+
+# Path-flavoured wrappers around the canonical string constants in const.py.
+SERVICE_ACCOUNT_TOKEN_FILE = Path(IN_CLUSTER_TOKEN_PATH)
+SERVICE_ACCOUNT_CA_FILE = Path(IN_CLUSTER_CA_PATH)
+
+
+# Indirection helpers — give tests a stable patch target instead of having to
+# reach into PosixPath instances (whose attributes are read-only on CPython).
+
+
+def _service_account_token_exists() -> bool:
+    return SERVICE_ACCOUNT_TOKEN_FILE.is_file()
+
+
+def _service_account_ca_exists() -> bool:
+    return SERVICE_ACCOUNT_CA_FILE.is_file()
+
+
+def _read_service_account_token() -> str:
+    return SERVICE_ACCOUNT_TOKEN_FILE.read_text(encoding="utf-8")
+
+
+def _read_in_cluster_config_sync() -> dict[str, Any] | None:
+    """Read in-cluster ServiceAccount credentials. Sync — call via executor.
+
+    Returns None when not running inside a cluster (env var or token file
+    missing). Otherwise returns host/port/api_token plus ca_cert when the
+    CA bundle is mounted.
+    """
+    host = os.environ.get("KUBERNETES_SERVICE_HOST")
+    if not host:
+        return None
+    if not _service_account_token_exists():
+        return None
+
+    try:
+        token = _read_service_account_token().strip()
+    except OSError:
+        return None
+    if not token:
+        return None
+
+    port_str = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS") or os.environ.get(
+        "KUBERNETES_SERVICE_PORT", "443"
+    )
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = 443
+
+    result: dict[str, Any] = {"host": host, "port": port, "api_token": token}
+    if _service_account_ca_exists():
+        result["ca_cert"] = str(SERVICE_ACCOUNT_CA_FILE)
+    return result
+
+
+async def async_detect_in_cluster_config(
+    hass: HomeAssistant,
+) -> dict[str, Any] | None:
+    """Detect in-cluster ServiceAccount credentials, off the event loop."""
+    return await hass.async_add_executor_job(_read_in_cluster_config_sync)
+
+
+def _ensure_kubernetes_imported() -> bool:
+    """Ensure kubernetes package is imported.
+
+    Config flows run on the single event-loop thread, so a plain cached
+    check is enough — no lock needed.
+    """
+    global KUBERNETES_AVAILABLE, client, ApiException
+
+    if KUBERNETES_AVAILABLE is not None:
+        return KUBERNETES_AVAILABLE
+
+    try:
+        import kubernetes.client as k8s_client
+        from kubernetes.client.rest import ApiException as K8sApiException
+
+        client = k8s_client
+        ApiException = K8sApiException
+        KUBERNETES_AVAILABLE = True
+        _LOGGER.info("Kubernetes package imported successfully")
+
+    except ImportError as e:
+        KUBERNETES_AVAILABLE = False
+        _LOGGER.error("Kubernetes package not available: %s", e)
+        _LOGGER.debug("Python path (first 5 entries): %s", sys.path[:5])
+
+    except Exception as e:
+        KUBERNETES_AVAILABLE = False
+        _LOGGER.error("Unexpected error importing kubernetes package: %s", e)
+
+    return KUBERNETES_AVAILABLE
+
+
+class TokenRequired(ValueError):
+    """No API token was entered and none could be read from the pod."""
+
+
+class KubernetesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
+    """Handle a config flow for Kubernetes."""
+
+    VERSION = 1
+
+    @staticmethod
+    @config_entries.callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> KubernetesOptionsFlow:
+        """Return the options flow handler."""
+        return KubernetesOptionsFlow()
+
+    def __init__(self) -> None:
+        """Initialize the config flow."""
+        super().__init__()
+        self._connection_data: dict[str, Any] = {}
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle the initial step."""
+        errors = {}
+
+        # Check if kubernetes package is available
+        if not _ensure_kubernetes_imported():
+            errors["base"] = "kubernetes_not_installed"
+            _LOGGER.error("Kubernetes package is not installed")
+
+        if user_input is not None and KUBERNETES_AVAILABLE:
+            try:
+                # Validate the connection
+                await self._test_connection(user_input)
+
+                # Add default values for missing fields
+                user_input.setdefault(CONF_PORT, DEFAULT_PORT)
+                user_input.setdefault(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+                user_input.setdefault(CONF_CLUSTER_NAME, DEFAULT_CLUSTER_NAME)
+                user_input.setdefault(
+                    CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+                )
+                user_input.setdefault(
+                    CONF_SWITCH_UPDATE_INTERVAL, DEFAULT_SWITCH_UPDATE_INTERVAL
+                )
+                user_input.setdefault(
+                    CONF_SCALE_VERIFICATION_TIMEOUT, DEFAULT_SCALE_VERIFICATION_TIMEOUT
+                )
+                user_input.setdefault(CONF_SCALE_COOLDOWN, DEFAULT_SCALE_COOLDOWN)
+                user_input.setdefault(
+                    CONF_DEVICE_GROUPING_MODE, DEFAULT_DEVICE_GROUPING_MODE
+                )
+
+                # Store connection data for potential namespace selection step
+                self._connection_data = user_input.copy()
+
+                # If not monitoring all namespaces, proceed to namespace selection step
+                if not user_input.get(
+                    CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+                ):
+                    return await self.async_step_namespaces()
+                else:
+                    # Monitoring all namespaces - create entry directly
+                    # Remove namespace field when monitoring all namespaces
+                    user_input.pop(CONF_NAMESPACE, None)
+
+                    # Create unique ID for the config entry
+                    await self.async_set_unique_id(f"{user_input[CONF_CLUSTER_NAME]}")
+                    self._abort_if_unique_id_configured()
+
+                    return self.async_create_entry(
+                        title=user_input[CONF_CLUSTER_NAME],
+                        data=user_input,
+                    )
+            except AbortFlow:
+                # Re-raise AbortFlow exceptions to let them propagate
+                raise
+            except TokenRequired:
+                errors["base"] = "token_required"
+            except Exception as ex:  # pylint: disable=broad-except
+                _LOGGER.error("Failed to connect to Kubernetes: %s", ex)
+                errors["base"] = "cannot_connect"
+
+        # When HA itself runs inside the cluster, auto-fill the connection
+        # fields from the pod's ServiceAccount so the user only has to pick
+        # a cluster name and submit.
+        in_cluster = await async_detect_in_cluster_config(self.hass)
+        if in_cluster:
+            _LOGGER.info(
+                "In-cluster ServiceAccount detected at %s; pre-filling config form",
+                in_cluster["host"],
+            )
+
+        def _suggest(key: str) -> dict[str, Any] | None:
+            if in_cluster and key in in_cluster:
+                return {"suggested_value": in_cluster[key]}
+            return None
+
+        # Create schema for connection step (no namespace field here)
+        # Order: Cluster Name, Host, Port, Use In-Cluster, API Token,
+        # CA Certificate, Verify SSL, Monitor All Namespaces,
+        # Device Grouping Mode, Switch Update Interval,
+        # Scale Verification Timeout, Scale Cooldown.
+        # The in-cluster checkbox sits above the token field because, while
+        # enabled, the token below is only a fallback (issue #360).
+        schema = {
+            vol.Required(CONF_CLUSTER_NAME, default=DEFAULT_CLUSTER_NAME): str,
+            vol.Required(CONF_HOST, description=_suggest("host")): str,
+            vol.Optional(
+                CONF_PORT,
+                default=in_cluster["port"] if in_cluster else DEFAULT_PORT,
+            ): int,
+            # Default the checkbox to True only when in-cluster credentials
+            # were actually detected — turning it on without an SA volume
+            # mounted would have the client fall back to the static token.
+            vol.Optional(
+                CONF_USE_IN_CLUSTER,
+                default=bool(in_cluster),
+            ): bool,
+            # Optional: with in-cluster mode on, an empty token is filled from
+            # the mounted ServiceAccount in _test_connection.
+            vol.Optional(CONF_API_TOKEN, description=_suggest("api_token")): str,
+            vol.Optional(CONF_CA_CERT, description=_suggest("ca_cert")): str,
+            vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
+            vol.Optional(
+                CONF_MONITOR_ALL_NAMESPACES, default=DEFAULT_MONITOR_ALL_NAMESPACES
+            ): bool,
+            vol.Optional(
+                CONF_DEVICE_GROUPING_MODE,
+                default=DEFAULT_DEVICE_GROUPING_MODE,
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(
+                            value=DEVICE_GROUPING_MODE_NAMESPACE,
+                            label="Group by Namespace",
+                        ),
+                        SelectOptionDict(
+                            value=DEVICE_GROUPING_MODE_CLUSTER, label="Group by Cluster"
+                        ),
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                ),
+            ),
+            vol.Optional(
+                CONF_SWITCH_UPDATE_INTERVAL, default=DEFAULT_SWITCH_UPDATE_INTERVAL
+            ): int,
+            vol.Optional(
+                CONF_SCALE_VERIFICATION_TIMEOUT,
+                default=DEFAULT_SCALE_VERIFICATION_TIMEOUT,
+            ): int,
+            vol.Optional(CONF_SCALE_COOLDOWN, default=DEFAULT_SCALE_COOLDOWN): int,
+        }
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+        )
+
+    async def async_step_namespaces(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle the namespace selection step."""
+
+        async def _on_submit(config_data: dict[str, Any]) -> ConfigFlowResult:
+            # Create unique ID for the config entry
+            await self.async_set_unique_id(f"{config_data[CONF_CLUSTER_NAME]}")
+            self._abort_if_unique_id_configured()
+
+            return self.async_create_entry(
+                title=config_data[CONF_CLUSTER_NAME],
+                data=config_data,
+            )
+
+        return await self._async_namespace_step(
+            "namespaces",
+            user_input,
+            default_selected=[],
+            select_default=lambda _current, fetched: [fetched[0]],
+            on_submit=_on_submit,
+        )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Start re-authentication after the cluster rejected the stored token."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for a fresh API token and validate it against the stored host."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            # _test_connection mutates the dict it validates (it normalizes the
+            # host), so hand it a throwaway copy of the entry's settings. Only
+            # the token is written back to the entry.
+            candidate = {**entry.data, CONF_API_TOKEN: user_input[CONF_API_TOKEN]}
+            try:
+                await self._test_connection(candidate)
+            except Exception as ex:  # pylint: disable=broad-except
+                _LOGGER.error("Re-authentication with Kubernetes failed: %s", ex)
+                errors["base"] = "invalid_auth"
+            else:
+                data_updates: dict[str, Any] = {
+                    CONF_API_TOKEN: user_input[CONF_API_TOKEN]
+                }
+                # The client retries a 401 after re-reading the projected token,
+                # so an in-cluster entry only reaches reauth when that file is
+                # persistently rejected. Leaving in-cluster mode on would keep
+                # the pasted token inert and re-prompt forever, so switch the
+                # entry to the static token the user just supplied.
+                if entry.data.get(CONF_USE_IN_CLUSTER, DEFAULT_USE_IN_CLUSTER):
+                    data_updates[CONF_USE_IN_CLUSTER] = False
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates=data_updates,
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_TOKEN): str}),
+            description_placeholders={
+                "cluster_name": entry.data.get(CONF_CLUSTER_NAME, entry.title),
+                "host": entry.data.get(CONF_HOST, ""),
+            },
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfiguration of an existing entry."""
+        errors = {}
+
+        if not _ensure_kubernetes_imported():
+            errors["base"] = "kubernetes_not_installed"
+            _LOGGER.error("Kubernetes package is not installed")
+
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None and KUBERNETES_AVAILABLE:
+            try:
+                await self._test_connection(user_input)
+
+                # Apply defaults for optional fields
+                user_input.setdefault(CONF_PORT, DEFAULT_PORT)
+                user_input.setdefault(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+                user_input.setdefault(CONF_USE_IN_CLUSTER, DEFAULT_USE_IN_CLUSTER)
+                user_input.setdefault(
+                    CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+                )
+                user_input.setdefault(
+                    CONF_SWITCH_UPDATE_INTERVAL, DEFAULT_SWITCH_UPDATE_INTERVAL
+                )
+                user_input.setdefault(
+                    CONF_SCALE_VERIFICATION_TIMEOUT,
+                    DEFAULT_SCALE_VERIFICATION_TIMEOUT,
+                )
+                user_input.setdefault(CONF_SCALE_COOLDOWN, DEFAULT_SCALE_COOLDOWN)
+                user_input.setdefault(
+                    CONF_DEVICE_GROUPING_MODE, DEFAULT_DEVICE_GROUPING_MODE
+                )
+
+                # Inject the immutable cluster_name from the existing entry
+                user_input[CONF_CLUSTER_NAME] = entry.data[CONF_CLUSTER_NAME]
+
+                # Ensure CA cert is explicitly cleared if user removed it
+                if CONF_CA_CERT not in user_input:
+                    user_input[CONF_CA_CERT] = ""
+
+                # Store for potential namespace step
+                self._connection_data = user_input.copy()
+
+                if not user_input.get(
+                    CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+                ):
+                    return await self.async_step_reconfigure_namespaces()
+
+                # Explicitly clear namespaces so merge overwrites old value
+                user_input[CONF_NAMESPACE] = []
+
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates=user_input,
+                )
+            except AbortFlow:
+                raise
+            except TokenRequired:
+                errors["base"] = "token_required"
+            except Exception as ex:  # pylint: disable=broad-except
+                _LOGGER.error("Failed to connect to Kubernetes: %s", ex)
+                errors["base"] = "cannot_connect"
+
+        # Build schema pre-filled with current entry data (no cluster_name)
+        current = entry.data
+        schema = {
+            vol.Required(CONF_HOST, default=current.get(CONF_HOST, "")): str,
+            vol.Optional(CONF_PORT, default=current.get(CONF_PORT, DEFAULT_PORT)): int,
+            # Above the token field: while enabled, the token below is only a
+            # fallback (issue #360).
+            vol.Optional(
+                CONF_USE_IN_CLUSTER,
+                default=current.get(CONF_USE_IN_CLUSTER, DEFAULT_USE_IN_CLUSTER),
+            ): bool,
+            # suggested_value, not default: a cleared field must come back
+            # empty instead of silently restoring the stored token.
+            vol.Optional(
+                CONF_API_TOKEN,
+                description={"suggested_value": current.get(CONF_API_TOKEN, "")},
+            ): str,
+            vol.Optional(
+                CONF_CA_CERT,
+                description={
+                    "suggested_value": current.get(CONF_CA_CERT, ""),
+                },
+            ): str,
+            vol.Optional(
+                CONF_VERIFY_SSL,
+                default=current.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+            ): bool,
+            vol.Optional(
+                CONF_MONITOR_ALL_NAMESPACES,
+                default=current.get(
+                    CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+                ),
+            ): bool,
+            vol.Optional(
+                CONF_DEVICE_GROUPING_MODE,
+                default=current.get(
+                    CONF_DEVICE_GROUPING_MODE, DEFAULT_DEVICE_GROUPING_MODE
+                ),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(
+                            value=DEVICE_GROUPING_MODE_NAMESPACE,
+                            label="Group by Namespace",
+                        ),
+                        SelectOptionDict(
+                            value=DEVICE_GROUPING_MODE_CLUSTER,
+                            label="Group by Cluster",
+                        ),
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                ),
+            ),
+            vol.Optional(
+                CONF_SWITCH_UPDATE_INTERVAL,
+                default=current.get(
+                    CONF_SWITCH_UPDATE_INTERVAL, DEFAULT_SWITCH_UPDATE_INTERVAL
+                ),
+            ): int,
+            vol.Optional(
+                CONF_SCALE_VERIFICATION_TIMEOUT,
+                default=current.get(
+                    CONF_SCALE_VERIFICATION_TIMEOUT,
+                    DEFAULT_SCALE_VERIFICATION_TIMEOUT,
+                ),
+            ): int,
+            vol.Optional(
+                CONF_SCALE_COOLDOWN,
+                default=current.get(CONF_SCALE_COOLDOWN, DEFAULT_SCALE_COOLDOWN),
+            ): int,
+        }
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure_namespaces(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle namespace selection during reconfigure."""
+        entry = self._get_reconfigure_entry()
+
+        current_namespaces = entry.data.get(CONF_NAMESPACE, [])
+        if isinstance(current_namespaces, str):
+            current_namespaces = [current_namespaces]
+        default_selected: list[str] = (
+            list(current_namespaces) if current_namespaces else []
+        )
+
+        async def _on_submit(config_data: dict[str, Any]) -> ConfigFlowResult:
+            return self.async_update_reload_and_abort(
+                entry,
+                data_updates=config_data,
+            )
+
+        return await self._async_namespace_step(
+            "reconfigure_namespaces",
+            user_input,
+            default_selected=default_selected,
+            select_default=lambda current, fetched: [
+                ns for ns in current if ns in fetched
+            ],
+            on_submit=_on_submit,
+        )
+
+    async def _async_namespace_step(
+        self,
+        step_id: str,
+        user_input: dict[str, Any] | None,
+        *,
+        default_selected: list[str],
+        select_default: Callable[[list[str], list[str]], list[str]],
+        on_submit: Callable[[dict[str, Any]], Awaitable[ConfigFlowResult]],
+    ) -> ConfigFlowResult:
+        """Shared body for the namespace-selection steps.
+
+        Both ``async_step_namespaces`` and ``async_step_reconfigure_namespaces``
+        validate/merge/listify the submitted namespaces identically and only
+        differ in how the pre-selected default is derived from the fetched
+        namespaces (``select_default``) and in the terminal action taken on a
+        valid submission (``on_submit``).
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if CONF_NAMESPACE not in user_input or not user_input[CONF_NAMESPACE]:
+                errors[CONF_NAMESPACE] = "at_least_one_namespace_required"
+            else:
+                config_data = {**self._connection_data, **user_input}
+
+                # Ensure namespace is a list
+                if isinstance(config_data[CONF_NAMESPACE], str):
+                    config_data[CONF_NAMESPACE] = [
+                        ns.strip()
+                        for ns in config_data[CONF_NAMESPACE].split(",")
+                        if ns.strip()
+                    ]
+                elif not isinstance(config_data[CONF_NAMESPACE], list):
+                    config_data[CONF_NAMESPACE] = [DEFAULT_NAMESPACE]
+
+                # Filter out empty strings
+                config_data[CONF_NAMESPACE] = [
+                    ns for ns in config_data[CONF_NAMESPACE] if ns
+                ]
+
+                return await on_submit(config_data)
+
+        # Fetch namespaces from cluster using stored connection data
+        namespace_options: list[Any] = []
+        schema: dict[Any, Any]
+
+        try:
+            _LOGGER.info(
+                "Fetching namespaces from cluster at %s:%s...",
+                self._connection_data.get(CONF_HOST),
+                self._connection_data.get(CONF_PORT, DEFAULT_PORT),
+            )
+            fetched_namespaces = await self._fetch_namespaces(self._connection_data)
+
+            if fetched_namespaces:
+                _LOGGER.info(
+                    "Successfully fetched %d namespaces from cluster",
+                    len(fetched_namespaces),
+                )
+                namespace_options = [
+                    SelectOptionDict(value=ns, label=ns) for ns in fetched_namespaces
+                ]
+                default_selected = select_default(default_selected, fetched_namespaces)
+            else:
+                _LOGGER.warning(
+                    "No namespaces were fetched from cluster. "
+                    "This might indicate a connection or permissions issue."
+                )
+                errors["base"] = "cannot_fetch_namespaces"
+        except Exception:
+            _LOGGER.exception("Exception while fetching namespaces")
+            errors["base"] = "cannot_fetch_namespaces"
+
+        # If we couldn't fetch namespaces, show error but still allow manual entry
+        # by providing a text input fallback
+        if not namespace_options:
+            # Use text input as fallback if fetch failed
+            schema = {
+                vol.Required(
+                    CONF_NAMESPACE,
+                    default=(
+                        ", ".join(default_selected)
+                        if default_selected
+                        else DEFAULT_NAMESPACE
+                    ),
+                ): str,
+            }
+        else:
+            # Use multi-select dropdown with fetched namespaces
+            schema = {
+                vol.Optional(
+                    CONF_NAMESPACE,
+                    default=default_selected,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=namespace_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        multiple=True,
+                    ),
+                ),
+            }
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=vol.Schema(schema),
+            errors=errors,
+        )
+
+    async def _test_connection(self, user_input: dict[str, Any]) -> None:
+        """Test the connection to Kubernetes."""
+        import asyncio
+
+        # Check if kubernetes package is available
+        if not _ensure_kubernetes_imported():
+            raise ValueError("Kubernetes package is not installed")
+
+        # Validate required fields
+        if not user_input[CONF_HOST]:
+            raise ValueError("Host is required")
+
+        # The token is optional while in-cluster mode is on: take it from the
+        # mounted ServiceAccount, so validation uses it and it is stored as
+        # the fallback — the same value the form pre-fills.
+        if not user_input.get(CONF_API_TOKEN) and user_input.get(CONF_USE_IN_CLUSTER):
+            detected = await async_detect_in_cluster_config(self.hass)
+            if detected:
+                user_input[CONF_API_TOKEN] = detected["api_token"]
+
+        if not user_input.get(CONF_API_TOKEN):
+            raise TokenRequired("API token is required")
+
+        # Create a test configuration
+        if client is None:
+            raise ValueError("Kubernetes client not available")
+        configuration = client.Configuration()
+
+        # Clean the host input - remove any protocol prefix
+        from .kubernetes_client import normalize_host
+
+        host = user_input[CONF_HOST].strip()
+        if host.startswith(("http://", "https://")):
+            host = host.split("://", 1)[1]
+
+        # Validate the cleaned host
+        if not host:
+            raise ValueError("Host cannot be empty")
+
+        # Bracket bare IPv6 literals so the URLs below (and the persisted entry)
+        # are valid — e.g. "2001:db8::1" -> "[2001:db8::1]".
+        host = normalize_host(host)
+
+        # Store the cleaned host value
+        user_input[CONF_HOST] = host
+
+        configuration.host = f"https://{host}:{user_input.get(CONF_PORT, DEFAULT_PORT)}"
+        configuration.api_key = {
+            "authorization": f"Bearer {user_input[CONF_API_TOKEN]}"
+        }
+        configuration.verify_ssl = user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+
+        if user_input.get(CONF_CA_CERT):
+            configuration.ssl_ca_cert = user_input[CONF_CA_CERT]
+
+        # Create API client
+        api_client = client.ApiClient(configuration)
+        core_v1 = client.CoreV1Api(api_client)
+
+        # Test the connection
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, core_v1.get_api_resources)
+            _LOGGER.info(
+                "Successfully connected to Kubernetes API at %s", configuration.host
+            )
+        except ApiException as ex:  # type: ignore[misc]
+            _LOGGER.error("API Exception during connection test: %s", ex)
+            _LOGGER.error("Status: %s", ex.status)
+            _LOGGER.error("Reason: %s", ex.reason)
+            if ex.body:
+                _LOGGER.error("Response body: %s", ex.body)
+
+            # Fallback to aiohttp if kubernetes client fails
+            _LOGGER.info("Trying fallback connection with aiohttp...")
+            if await self._test_connection_aiohttp(user_input):
+                _LOGGER.info(
+                    "Successfully connected to Kubernetes API using aiohttp fallback"
+                )
+                return
+            else:
+                raise ValueError(
+                    f"Failed to connect to Kubernetes API: {ex.reason}"
+                ) from ex
+        except Exception as ex:
+            _LOGGER.error("Failed to test connection: %s", ex)
+            # Fallback to aiohttp if kubernetes client fails
+            _LOGGER.info("Trying fallback connection with aiohttp...")
+            if await self._test_connection_aiohttp(user_input):
+                _LOGGER.info(
+                    "Successfully connected to Kubernetes API using aiohttp fallback"
+                )
+                return
+            else:
+                raise ValueError(f"Connection test failed: {ex!s}") from ex
+
+    @staticmethod
+    async def _ssl_param(user_input: dict[str, Any]) -> Any:
+        """Build the aiohttp ``ssl=`` value from the flow's verify_ssl / ca_cert.
+
+        Delegates to the runtime client's helper so setup validates with the
+        exact TLS settings the entry will run with. Imported lazily because
+        ``kubernetes_client`` imports the ``kubernetes`` package at module
+        level and the flow must survive that package being absent.
+        """
+        from .kubernetes_client import build_ssl_param
+
+        return await build_ssl_param(
+            user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+            user_input.get(CONF_CA_CERT),
+        )
+
+    async def _test_connection_aiohttp(self, user_input: dict[str, Any]) -> bool:
+        """Test the connection using aiohttp as fallback."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {user_input[CONF_API_TOKEN]}",
+                "Accept": "application/json",
+            }
+
+            host = user_input[CONF_HOST]
+            port = user_input.get(CONF_PORT, DEFAULT_PORT)
+            ssl_param = await self._ssl_param(user_input)
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://{host}:{port}/api/v1/",
+                    headers=headers,
+                    ssl=ssl_param,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status == 200:
+                        _LOGGER.info(
+                            "Successfully connected to Kubernetes API using aiohttp"
+                        )
+                        return True
+                    else:
+                        _LOGGER.error(
+                            "aiohttp connection failed with status: %s", response.status
+                        )
+                        return False
+        except Exception as ex:
+            _LOGGER.error("aiohttp connection test failed: %s", ex)
+            return False
+
+    async def _fetch_namespaces(self, user_input: dict[str, Any]) -> list[str]:
+        """Fetch available namespaces from the Kubernetes cluster."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {user_input[CONF_API_TOKEN]}",
+                "Accept": "application/json",
+            }
+
+            host = user_input[CONF_HOST]
+            port = user_input.get(CONF_PORT, DEFAULT_PORT)
+            ssl_param = await self._ssl_param(user_input)
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://{host}:{port}/api/v1/namespaces",
+                    headers=headers,
+                    ssl=ssl_param,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        namespaces = [
+                            item["metadata"]["name"] for item in data.get("items", [])
+                        ]
+                        _LOGGER.info(
+                            "Successfully fetched %d namespaces from cluster",
+                            len(namespaces),
+                        )
+                        return sorted(namespaces)
+                    else:
+                        error_text = await response.text()
+                        _LOGGER.warning(
+                            "Failed to fetch namespaces: HTTP %d - %s",
+                            response.status,
+                            error_text[:200] if error_text else "No error details",
+                        )
+                        return []
+        except aiohttp.ClientError as ex:
+            _LOGGER.warning("Network error while fetching namespaces: %s", ex)
+            return []
+        except Exception as ex:
+            _LOGGER.warning("Failed to fetch namespaces: %s", ex, exc_info=True)
+            return []
+
+
+class KubernetesOptionsFlow(config_entries.OptionsFlow):
+    """Handle Kubernetes integration options."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle the options form."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self.config_entry.options
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_ENABLE_PANEL,
+                    default=current.get(CONF_ENABLE_PANEL, DEFAULT_ENABLE_PANEL),
+                ): bool,
+                vol.Optional(
+                    CONF_ENABLE_WATCH,
+                    default=current.get(CONF_ENABLE_WATCH, DEFAULT_ENABLE_WATCH),
+                ): bool,
+                vol.Optional(
+                    CONF_ENABLE_EVENTS,
+                    default=current.get(CONF_ENABLE_EVENTS, DEFAULT_ENABLE_EVENTS),
+                ): bool,
+                vol.Optional(
+                    CONF_EVENT_TYPES,
+                    default=current.get(CONF_EVENT_TYPES, DEFAULT_EVENT_TYPES),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                value=EVENT_TYPES_WARNING,
+                                label="Warning only",
+                            ),
+                            SelectOptionDict(
+                                value=EVENT_TYPES_ALL,
+                                label="All events",
+                            ),
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    ),
+                ),
+                vol.Optional(
+                    CONF_EXCLUDE_JOB_PODS,
+                    default=current.get(
+                        CONF_EXCLUDE_JOB_PODS, DEFAULT_EXCLUDE_JOB_PODS
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_DISABLED_RESOURCES,
+                    default=list(current.get(CONF_DISABLED_RESOURCES, [])),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=list(DISABLABLE_RESOURCES),
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        translation_key=CONF_DISABLED_RESOURCES,
+                    ),
+                ),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

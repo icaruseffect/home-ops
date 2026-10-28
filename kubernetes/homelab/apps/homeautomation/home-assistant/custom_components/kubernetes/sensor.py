@@ -1,0 +1,1075 @@
+"""Sensor platform for Kubernetes integration."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+import logging
+from typing import Any, NamedTuple
+
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+
+from .const import (
+    ATTR_WORKLOAD_TYPE,
+    WORKLOAD_TYPE_CRONJOB,
+    WORKLOAD_TYPE_JOB,
+    WORKLOAD_TYPE_POD,
+)
+from .coordinator import (
+    KubernetesConfigEntry,
+    KubernetesDataCoordinator,
+    disabled_resources,
+)
+from .device import get_cluster_device_info, get_namespace_device_info
+
+_LOGGER = logging.getLogger(__name__)
+
+# Data updates are centralized in the coordinator (quality scale: parallel-updates)
+PARALLEL_UPDATES = 0
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: KubernetesConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Kubernetes sensors based on a config entry."""
+    try:
+        # Get the coordinator and client from the entry's runtime data
+        entry_data = config_entry.runtime_data
+        coordinator = entry_data.coordinator
+        client = entry_data.client
+
+        disabled = disabled_resources(config_entry)
+
+        # Create sensors for different Kubernetes resources
+        sensors: list[KubernetesBaseSensor] = []
+        if "counts" not in disabled:
+            sensors.extend(
+                [
+                    KubernetesPodsSensor(coordinator, client, config_entry),
+                    KubernetesNodesSensor(coordinator, client, config_entry),
+                    KubernetesDeploymentsSensor(coordinator, client, config_entry),
+                    KubernetesStatefulSetsSensor(coordinator, client, config_entry),
+                    KubernetesDaemonSetsSensor(coordinator, client, config_entry),
+                    KubernetesCronJobsSensor(coordinator, client, config_entry),
+                    KubernetesJobsSensor(coordinator, client, config_entry),
+                    KubernetesIngressesSensor(coordinator, client, config_entry),
+                    KubernetesServicesSensor(coordinator, client, config_entry),
+                ]
+            )
+
+        # Ensure cluster device exists (coordinator already refreshed in __init__.py)
+        from .device import get_or_create_cluster_device
+
+        await get_or_create_cluster_device(hass, config_entry)
+
+        # Create individual sensors for each Kubernetes node
+        nodes_data = coordinator.get_all_nodes_data()
+        _LOGGER.debug("Creating node sensors for nodes: %s", list(nodes_data.keys()))
+
+        node_sensors_created = 0
+        if "nodes" not in disabled:
+            for node_name in nodes_data:
+                node_sensor = KubernetesNodeSensor(
+                    coordinator, client, config_entry, node_name
+                )
+                sensors.append(node_sensor)
+                node_sensors_created += 1
+                _LOGGER.debug(
+                    "Created node sensor for: %s (unique_id: %s)",
+                    node_name,
+                    node_sensor.unique_id,
+                )
+
+        # Create individual sensors for each Kubernetes pod
+        pods_data = coordinator.get_all_pods_data()
+        _LOGGER.debug("Creating pod sensors for pods: %s", list(pods_data.keys()))
+
+        # Ensure namespace devices exist for all pod and workload namespaces
+        from .device import get_or_create_namespace_device
+
+        pod_namespaces = {
+            pod_data.get("namespace", "default") for pod_data in pods_data.values()
+        }
+        for namespace in pod_namespaces:
+            await get_or_create_namespace_device(hass, config_entry, namespace)
+
+        pod_sensors_created = 0
+        for _pod_key, pod_data in pods_data.items():
+            namespace = pod_data.get("namespace", "default")
+            pod_name = pod_data.get("name", "unknown")
+            pod_sensor = KubernetesPodSensor(
+                coordinator, client, config_entry, namespace, pod_name
+            )
+            sensors.append(pod_sensor)
+            pod_sensors_created += 1
+            _LOGGER.debug(
+                "Created pod sensor for: %s/%s (unique_id: %s)",
+                namespace,
+                pod_name,
+                pod_sensor.unique_id,
+            )
+
+        # Create individual sensors for each DaemonSet
+        data = coordinator.data or {}
+        daemonsets_data = data.get("daemonsets", {})
+        _LOGGER.debug(
+            "Creating daemonset sensors for: %s", list(daemonsets_data.keys())
+        )
+
+        daemonset_sensors_created = 0
+        for daemonset_data in daemonsets_data.values():
+            daemonset_name = daemonset_data.get("name", "")
+            namespace = daemonset_data.get("namespace", "default")
+            await get_or_create_namespace_device(hass, config_entry, namespace)
+            daemonset_sensor = KubernetesDaemonSetSensor(
+                coordinator, client, config_entry, daemonset_name, namespace
+            )
+            sensors.append(daemonset_sensor)
+            daemonset_sensors_created += 1
+
+        # Create status and CPU/memory sensors for deployments and statefulsets
+        metric_sensors_created = 0
+        status_sensors_created = 0
+        for workload_type in ("deployment", "statefulset"):
+            resource_key = f"{workload_type}s"
+            if resource_key in disabled:
+                continue
+            for workload_data in data.get(resource_key, {}).values():
+                workload_name = workload_data.get("name", "")
+                namespace = workload_data.get("namespace", "default")
+                await get_or_create_namespace_device(hass, config_entry, namespace)
+                sensors.append(
+                    KubernetesWorkloadStatusSensor(
+                        coordinator,
+                        client,
+                        config_entry,
+                        workload_name,
+                        namespace,
+                        workload_type,
+                    )
+                )
+                status_sensors_created += 1
+                if "metrics" in disabled:
+                    continue
+                for metric in ("cpu", "memory"):
+                    sensors.append(
+                        KubernetesWorkloadMetricSensor(
+                            coordinator,
+                            client,
+                            config_entry,
+                            workload_name,
+                            namespace,
+                            workload_type,
+                            metric,
+                        )
+                    )
+                    metric_sensors_created += 1
+
+        # Create individual sensors for each CronJob
+        cronjob_sensors_created = 0
+        if "cronjobs" not in disabled:
+            for cronjob_data in data.get("cronjobs", {}).values():
+                cronjob_name = cronjob_data.get("name", "")
+                namespace = cronjob_data.get("namespace", "default")
+                await get_or_create_namespace_device(hass, config_entry, namespace)
+                sensors.append(
+                    KubernetesCronJobSensor(
+                        coordinator, client, config_entry, cronjob_name, namespace
+                    )
+                )
+                cronjob_sensors_created += 1
+
+        # Create individual sensors for each Job
+        job_sensors_created = 0
+        for job_data in data.get("jobs", {}).values():
+            job_name = job_data.get("name", "")
+            namespace = job_data.get("namespace", "default")
+            await get_or_create_namespace_device(hass, config_entry, namespace)
+            sensors.append(
+                KubernetesJobSensor(
+                    coordinator, client, config_entry, job_name, namespace
+                )
+            )
+            job_sensors_created += 1
+
+        async_add_entities(sensors)
+
+        # Store the add_entities callback for dynamic entity management.
+        # entry_data.sensor_pending_unique_ids tracks unique_ids already passed
+        # to the callback but not yet in the entity registry.
+        entry_data.sensor_add_entities = async_add_entities
+
+        # Set up listener for adding new entities dynamically
+        @callback
+        def _async_add_new_entities() -> None:
+            """Add new entities when new resources are discovered."""
+            hass.async_create_task(
+                _async_discover_and_add_new_sensors(
+                    hass, config_entry, coordinator, client
+                )
+            )
+
+        # Register the callback with the coordinator
+        coordinator.async_add_listener(_async_add_new_entities)
+
+        _LOGGER.debug(
+            "Successfully set up %d Kubernetes sensors (including %d node sensors, %d pod sensors, %d daemonset sensors, %d status sensors, %d metric sensors, %d cronjob sensors, %d job sensors)",
+            len(sensors),
+            node_sensors_created,
+            pod_sensors_created,
+            daemonset_sensors_created,
+            status_sensors_created,
+            metric_sensors_created,
+            cronjob_sensors_created,
+            job_sensors_created,
+        )
+    except Exception as ex:
+        _LOGGER.error("Failed to set up Kubernetes sensors: %s", ex)
+        raise
+
+
+class _DiscoverySpec(NamedTuple):
+    """One-bucket discovery: which bucket, which entity, which constructor args."""
+
+    bucket: str
+    entity_cls: type[KubernetesBaseSensor]
+    # (bucket key, bucket item) -> positional args after (coordinator, client, entry)
+    args: Callable[[str, dict[str, Any]], tuple[Any, ...]]
+    disabled_key: str | None = None
+
+
+def _name_and_namespace(_key: str, item: dict[str, Any]) -> tuple[str, str]:
+    """Constructor args for the per-resource sensors that take (name, namespace)."""
+    return item.get("name", ""), item.get("namespace", "default")
+
+
+def _discover_simple(
+    coordinator: KubernetesDataCoordinator,
+    client: Any,
+    config_entry: ConfigEntry,
+    existing_unique_ids: set[str],
+    spec: _DiscoverySpec,
+) -> list[KubernetesBaseSensor]:
+    """Discover new per-resource sensors for one coordinator bucket.
+
+    The entity is built first and its own ``unique_id`` decides whether it is
+    new, so the id format lives in exactly one place (the entity class).
+    """
+    new_entities: list[KubernetesBaseSensor] = []
+    if spec.disabled_key and spec.disabled_key in disabled_resources(config_entry):
+        return new_entities
+    if not coordinator.data or spec.bucket not in coordinator.data:
+        return new_entities
+    for key, item in coordinator.data[spec.bucket].items():
+        entity = spec.entity_cls(
+            coordinator, client, config_entry, *spec.args(key, item)
+        )
+        if entity.unique_id in existing_unique_ids:
+            continue
+        _LOGGER.info("Adding new %s sensor: %s", spec.bucket, entity.unique_id)
+        new_entities.append(entity)
+    return new_entities
+
+
+def _discover_new_workload_status_sensors(
+    coordinator: KubernetesDataCoordinator,
+    client: Any,
+    config_entry: ConfigEntry,
+    existing_unique_ids: set[str],
+) -> list[KubernetesWorkloadStatusSensor]:
+    """Discover new workload status sensors for deployments and statefulsets."""
+    new_entities = []
+    disabled = disabled_resources(config_entry)
+    for workload_type in ("deployment", "statefulset"):
+        resource_key = f"{workload_type}s"
+        if resource_key in disabled:
+            continue
+        if coordinator.data and resource_key in coordinator.data:
+            for workload_data in coordinator.data[resource_key].values():
+                workload_name = workload_data.get("name", "")
+                namespace = workload_data.get("namespace", "default")
+                unique_id = f"{config_entry.entry_id}_{namespace}_{workload_name}_{workload_type}_status"
+                if unique_id not in existing_unique_ids:
+                    _LOGGER.info(
+                        "Adding new status sensor for %s: %s",
+                        workload_type,
+                        workload_name,
+                    )
+                    new_entities.append(
+                        KubernetesWorkloadStatusSensor(
+                            coordinator,
+                            client,
+                            config_entry,
+                            workload_name,
+                            namespace,
+                            workload_type,
+                        )
+                    )
+    return new_entities
+
+
+def _discover_new_workload_metric_sensors(
+    coordinator: KubernetesDataCoordinator,
+    client: Any,
+    config_entry: ConfigEntry,
+    existing_unique_ids: set[str],
+) -> list[KubernetesWorkloadMetricSensor]:
+    """Discover new workload metric sensors for deployments and statefulsets."""
+    new_entities: list[KubernetesWorkloadMetricSensor] = []
+    disabled = disabled_resources(config_entry)
+    if "metrics" in disabled:
+        return new_entities
+    for workload_type in ("deployment", "statefulset"):
+        resource_key = f"{workload_type}s"
+        if resource_key in disabled:
+            continue
+        if coordinator.data and resource_key in coordinator.data:
+            for workload_data in coordinator.data[resource_key].values():
+                workload_name = workload_data.get("name", "")
+                namespace = workload_data.get("namespace", "default")
+                for metric in ("cpu", "memory"):
+                    unique_id = f"{config_entry.entry_id}_{namespace}_{workload_name}_{workload_type}_{metric}"
+                    if unique_id not in existing_unique_ids:
+                        _LOGGER.info(
+                            "Adding new %s metric sensor for %s: %s",
+                            metric,
+                            workload_type,
+                            workload_name,
+                        )
+                        new_entities.append(
+                            KubernetesWorkloadMetricSensor(
+                                coordinator,
+                                client,
+                                config_entry,
+                                workload_name,
+                                namespace,
+                                workload_type,
+                                metric,
+                            )
+                        )
+    return new_entities
+
+
+async def _async_discover_and_add_new_sensors(
+    hass: HomeAssistant,
+    config_entry: KubernetesConfigEntry,
+    coordinator: KubernetesDataCoordinator,
+    client: Any,
+) -> None:
+    """Discover and add new sensors for newly discovered Kubernetes resources."""
+    try:
+        entity_registry = async_get_entity_registry(hass)
+
+        # Get the stored add_entities callback
+        entry_data = config_entry.runtime_data
+        add_entities_callback = entry_data.sensor_add_entities
+        if not add_entities_callback:
+            _LOGGER.warning(
+                "No add_entities callback found for dynamic sensor management"
+            )
+            return
+
+        # Get existing entities for this config entry, plus any that were already
+        # passed to add_entities_callback but may not be in the registry yet.
+        existing_entities = entity_registry.entities.get_entries_for_config_entry_id(
+            config_entry.entry_id
+        )
+        existing_unique_ids = {
+            entity.unique_id for entity in existing_entities if entity.unique_id
+        }
+        pending_ids = entry_data.sensor_pending_unique_ids
+        # Prune IDs that are now in the registry — keeps the set bounded
+        pending_ids -= existing_unique_ids
+        existing_unique_ids |= pending_ids
+
+        # Ensure cluster device exists
+        from .device import get_or_create_cluster_device, get_or_create_namespace_device
+
+        await get_or_create_cluster_device(hass, config_entry)
+
+        # Discover new sensors (same order as the original per-type blocks)
+        args = (coordinator, client, config_entry, existing_unique_ids)
+        new_entities: list[KubernetesBaseSensor] = [
+            *_discover_simple(*args, _SIMPLE_DISCOVERY["node"]),
+            *_discover_simple(*args, _SIMPLE_DISCOVERY["pod"]),
+            *_discover_new_workload_status_sensors(*args),
+            *_discover_simple(*args, _SIMPLE_DISCOVERY["daemonset"]),
+            *_discover_new_workload_metric_sensors(*args),
+            *_discover_simple(*args, _SIMPLE_DISCOVERY["cronjob"]),
+            *_discover_simple(*args, _SIMPLE_DISCOVERY["job"]),
+        ]
+
+        # Ensure namespace devices exist for every namespaced new sensor
+        # (node sensors have no namespace and hang off the cluster device).
+        namespaces = {getattr(e, "namespace", None) for e in new_entities}
+        for namespace in namespaces - {None}:
+            await get_or_create_namespace_device(hass, config_entry, namespace)
+
+        # Add new entities if any were found
+        if new_entities:
+            _LOGGER.info("Adding %d new sensors", len(new_entities))
+            # Track these unique_ids so they aren't re-added before the entity
+            # registry picks them up.
+            pending_ids.update(e.unique_id for e in new_entities if e.unique_id)
+            add_entities_callback(new_entities)
+        else:
+            _LOGGER.debug("No new sensors to add")
+
+    except Exception as ex:
+        _LOGGER.error("Failed to discover and add new sensors: %s", ex)
+
+
+class KubernetesBaseSensor(SensorEntity):
+    """Base class for Kubernetes sensors."""
+
+    # Coordinator-driven: HA's 30 s entity poll would only request another
+    # coordinator refresh, defeating the configured update interval.
+    _attr_should_poll = False
+
+    def __init__(
+        self, coordinator: KubernetesDataCoordinator, client, config_entry: ConfigEntry
+    ) -> None:
+        """Initialize the sensor."""
+        self.coordinator = coordinator
+        self.client = client
+        self.config_entry = config_entry
+        self._attr_has_entity_name = True
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        available = self.coordinator.last_update_success
+        return available
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class KubernetesCountSensor(KubernetesBaseSensor):
+    """Cluster-wide resource count; subclasses only set the class attributes.
+
+    ``native_value`` reads the coordinator in this order: ``_count_key`` (a
+    precomputed count the coordinator stores) when present, else ``len()`` of
+    ``_bucket`` when present, else 0. Pods/nodes set only ``_count_key`` and
+    deployments/statefulsets/cronjobs only ``_bucket``; the fully-disableable
+    types set both because the bucket is empty when the type is off.
+    """
+
+    _unique_suffix: str
+    _count_key: str | None = None
+    _bucket: str | None = None
+
+    def __init__(
+        self, coordinator: KubernetesDataCoordinator, client, config_entry: ConfigEntry
+    ) -> None:
+        """Initialize the count sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_{self._unique_suffix}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_cluster_device_info(self.config_entry)
+
+    @property
+    def native_value(self) -> int:
+        """Return the native value of the sensor."""
+        data = self.coordinator.data
+        if not data:
+            return 0
+        if self._count_key is not None and self._count_key in data:
+            return data[self._count_key]
+        if self._bucket is not None and self._bucket in data:
+            return len(data[self._bucket])
+        return 0
+
+
+class KubernetesPodsSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes pods count."""
+
+    _attr_name = "Pods Count"
+    _attr_native_unit_of_measurement = "pods"
+    _unique_suffix = "pods_count"
+    _count_key = "pods_count"
+
+
+class KubernetesNodesSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes nodes count."""
+
+    _attr_name = "Nodes Count"
+    _attr_native_unit_of_measurement = "nodes"
+    _unique_suffix = "nodes_count"
+    _count_key = "nodes_count"
+
+
+class KubernetesDeploymentsSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes deployments count."""
+
+    _attr_name = "Deployments Count"
+    _attr_native_unit_of_measurement = "deployments"
+    _unique_suffix = "deployments_count"
+    _bucket = "deployments"
+
+
+class KubernetesStatefulSetsSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes StatefulSets count."""
+
+    _attr_name = "StatefulSets Count"
+    _attr_native_unit_of_measurement = "statefulsets"
+    _unique_suffix = "statefulsets_count"
+    _bucket = "statefulsets"
+
+
+class KubernetesDaemonSetsSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes DaemonSets count."""
+
+    _attr_name = "DaemonSets Count"
+    _attr_native_unit_of_measurement = "daemonsets"
+    _unique_suffix = "daemonsets_count"
+    _count_key = "daemonsets_count"
+    _bucket = "daemonsets"
+
+
+class KubernetesCronJobsSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes CronJobs count."""
+
+    _attr_name = "CronJobs Count"
+    _attr_native_unit_of_measurement = "cronjobs"
+    _unique_suffix = "cronjobs_count"
+    _bucket = "cronjobs"
+
+
+class KubernetesJobsSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes Jobs count."""
+
+    _attr_name = "Jobs Count"
+    _attr_native_unit_of_measurement = "jobs"
+    _unique_suffix = "jobs_count"
+    _count_key = "jobs_count"
+    _bucket = "jobs"
+
+
+class KubernetesIngressesSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes Ingresses count."""
+
+    _attr_name = "Ingresses Count"
+    _attr_native_unit_of_measurement = "ingresses"
+    _unique_suffix = "ingresses_count"
+    _count_key = "ingresses_count"
+    _bucket = "ingresses"
+
+
+class KubernetesServicesSensor(KubernetesCountSensor):
+    """Sensor for Kubernetes Services count."""
+
+    _attr_name = "Services Count"
+    _attr_native_unit_of_measurement = "services"
+    _unique_suffix = "services_count"
+    _count_key = "services_count"
+    _bucket = "services"
+
+
+class KubernetesNodeSensor(KubernetesBaseSensor):
+    """Sensor for individual Kubernetes node with detailed information."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client,
+        config_entry: ConfigEntry,
+        node_name: str,
+    ) -> None:
+        """Initialize the node sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.node_name = node_name
+        self._attr_name = f"{node_name}"
+        self._attr_unique_id = f"{config_entry.entry_id}_node_{node_name}"
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:server"
+        # Override state class since this sensor returns string values, not measurements
+        self._attr_state_class = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_cluster_device_info(self.config_entry)
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor (node status)."""
+        node_data = self.coordinator.get_node_data(self.node_name)
+        if node_data:
+            status = node_data.get("status", "Unknown")
+            _LOGGER.debug("Node %s native_value: %s", self.node_name, status)
+            return status
+        _LOGGER.debug("Node %s has no data, returning Unknown", self.node_name)
+        return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes for the node."""
+        node_data = self.coordinator.get_node_data(self.node_name)
+        if not node_data:
+            return {}
+
+        attributes = {
+            "internal_IP": node_data.get("internal_ip", "N/A"),
+            "external_IP": node_data.get("external_ip", "N/A"),
+            "memory_capacity_(GiB)": f"{node_data.get('memory_capacity_gib', 0)} GiB",
+            "memory_allocatable_(GiB)": f"{node_data.get('memory_allocatable_gib', 0)} GiB",
+            "CPU": f"{node_data.get('cpu_cores', 0)} vCPU",
+            "OS_image": node_data.get("os_image", "N/A"),
+            "kernel_version": node_data.get("kernel_version", "N/A"),
+            "container_runtime": node_data.get("container_runtime", "N/A"),
+            "kubelet_version": node_data.get("kubelet_version", "N/A"),
+            "schedulable": node_data.get("schedulable", True),
+            "creation_timestamp": node_data.get("creation_timestamp", "N/A"),
+        }
+
+        return attributes
+
+
+class KubernetesPodSensor(KubernetesBaseSensor):
+    """Sensor for individual Kubernetes pod with detailed information."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client,
+        config_entry: ConfigEntry,
+        namespace: str,
+        pod_name: str,
+    ) -> None:
+        """Initialize the pod sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.namespace = namespace
+        self.pod_name = pod_name
+        self._attr_name = f"{pod_name}"
+        self._attr_unique_id = f"{config_entry.entry_id}_pod_{namespace}_{pod_name}"
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:kubernetes"
+        # Override state class since this sensor returns string values, not measurements
+        self._attr_state_class = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_namespace_device_info(self.hass, self.config_entry, self.namespace)
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor (pod phase)."""
+        pod_data = self.coordinator.get_pod_data(self.namespace, self.pod_name)
+        if pod_data:
+            phase = pod_data.get("phase", "Unknown")
+            _LOGGER.debug(
+                "Pod %s/%s native_value: %s", self.namespace, self.pod_name, phase
+            )
+            return phase
+        _LOGGER.debug(
+            "Pod %s/%s has no data, returning Unknown", self.namespace, self.pod_name
+        )
+        return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes for the pod."""
+        pod_data = self.coordinator.get_pod_data(self.namespace, self.pod_name)
+        if not pod_data:
+            return {}
+
+        attributes = {
+            "namespace": pod_data.get("namespace", "N/A"),
+            "phase": pod_data.get("phase", "Unknown"),
+            "ready_containers": pod_data.get("ready_containers", 0),
+            "total_containers": pod_data.get("total_containers", 0),
+            "restart_count": pod_data.get("restart_count", 0),
+            "node_name": pod_data.get("node_name", "N/A"),
+            "pod_ip": pod_data.get("pod_ip", "N/A"),
+            "creation_timestamp": pod_data.get("creation_timestamp", "N/A"),
+            "owner_kind": pod_data.get("owner_kind", "N/A"),
+            "owner_name": pod_data.get("owner_name", "N/A"),
+            "container_waiting_reason": pod_data.get("container_waiting_reason"),
+            "container_terminated_reason": pod_data.get("container_terminated_reason"),
+            "container_terminated_exit_code": pod_data.get(
+                "container_terminated_exit_code"
+            ),
+            "last_terminated_reason": pod_data.get("last_terminated_reason"),
+            "last_terminated_exit_code": pod_data.get("last_terminated_exit_code"),
+            "pending_reason": pod_data.get("pending_reason"),
+            "problem": pod_data.get("problem", False),
+            "problem_reason": pod_data.get("problem_reason"),
+            ATTR_WORKLOAD_TYPE: WORKLOAD_TYPE_POD,
+        }
+
+        return attributes
+
+
+class KubernetesWorkloadMetricSensor(KubernetesBaseSensor):
+    """Sensor for CPU or memory usage of a Kubernetes deployment or statefulset."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client: Any,
+        config_entry: ConfigEntry,
+        workload_name: str,
+        namespace: str,
+        workload_type: str,
+        metric: str,
+    ) -> None:
+        """Initialize the workload metric sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.workload_name = workload_name
+        self.namespace = namespace
+        self._workload_type = workload_type
+        self._metric = metric
+
+        if metric == "cpu":
+            self._attr_name = f"{workload_name} CPU Usage"
+            self._attr_native_unit_of_measurement = "m"
+            self._attr_icon = "mdi:cpu-64-bit"
+        else:
+            self._attr_name = f"{workload_name} Memory Usage"
+            self._attr_native_unit_of_measurement = "MiB"
+            self._attr_icon = "mdi:memory"
+
+        self._attr_unique_id = f"{config_entry.entry_id}_{namespace}_{workload_name}_{workload_type}_{metric}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_namespace_device_info(self.hass, self.config_entry, self.namespace)
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current metric value, or None when unavailable."""
+        if not self.coordinator.data:
+            return None
+        workload_data = self.coordinator.data.get(f"{self._workload_type}s", {}).get(
+            f"{self.namespace}_{self.workload_name}"
+        )
+        if workload_data is None:
+            return None
+        metric_key = "cpu_usage" if self._metric == "cpu" else "memory_usage"
+        value = workload_data.get(metric_key)
+        if value is None:
+            return None
+        return round(value, 2)
+
+
+class KubernetesWorkloadStatusSensor(KubernetesBaseSensor):
+    """Sensor for the readiness status of a Kubernetes deployment or statefulset."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client: Any,
+        config_entry: ConfigEntry,
+        workload_name: str,
+        namespace: str,
+        workload_type: str,
+    ) -> None:
+        """Initialize the workload status sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.workload_name = workload_name
+        self.namespace = namespace
+        self._workload_type = workload_type
+        self._attr_name = workload_name
+        self._attr_unique_id = f"{config_entry.entry_id}_{namespace}_{workload_name}_{workload_type}_status"
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:kubernetes"
+        self._attr_state_class = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_namespace_device_info(self.hass, self.config_entry, self.namespace)
+
+    @property
+    def native_value(self) -> str:
+        """Return the readiness status of the workload."""
+        if not self.coordinator.data:
+            return "Unknown"
+        workload_data = self.coordinator.data.get(f"{self._workload_type}s", {}).get(
+            f"{self.namespace}_{self.workload_name}"
+        )
+        if workload_data is None:
+            return "Unknown"
+
+        replicas = workload_data.get("replicas", 0)
+        ready_replicas = workload_data.get("ready_replicas", 0)
+
+        if replicas == 0:
+            return "Scaled Down"
+        if ready_replicas == replicas:
+            return "Ready"
+        if ready_replicas == 0:
+            return "Not Ready"
+        return "Degraded"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return replica counts as attributes."""
+        if not self.coordinator.data:
+            return {}
+        workload_data = self.coordinator.data.get(f"{self._workload_type}s", {}).get(
+            f"{self.namespace}_{self.workload_name}"
+        )
+        if not workload_data:
+            return {}
+
+        return {
+            "namespace": workload_data.get("namespace", "N/A"),
+            "replicas": workload_data.get("replicas", 0),
+            "ready_replicas": workload_data.get("ready_replicas", 0),
+            "available_replicas": workload_data.get("available_replicas", 0),
+        }
+
+
+class KubernetesDaemonSetSensor(KubernetesBaseSensor):
+    """Sensor for an individual Kubernetes DaemonSet."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client: Any,
+        config_entry: ConfigEntry,
+        daemonset_name: str,
+        namespace: str,
+    ) -> None:
+        """Initialize the DaemonSet sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.daemonset_name = daemonset_name
+        self.namespace = namespace
+        self._attr_name = daemonset_name
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_daemonset_{namespace}_{daemonset_name}"
+        )
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:layers"
+        self._attr_state_class = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_namespace_device_info(self.hass, self.config_entry, self.namespace)
+
+    @property
+    def native_value(self) -> str:
+        """Return the status of the DaemonSet."""
+        daemonset_data = (
+            self.coordinator.data.get("daemonsets", {}).get(
+                f"{self.namespace}_{self.daemonset_name}"
+            )
+            if self.coordinator.data
+            else None
+        )
+        if daemonset_data is None:
+            return "Unknown"
+
+        desired = daemonset_data.get("desired_number_scheduled", 0)
+        ready = daemonset_data.get("number_ready", 0)
+
+        if desired == 0:
+            return "Unknown"
+        if ready == desired:
+            return "Ready"
+        if ready == 0:
+            return "Not Ready"
+        return "Degraded"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes for the DaemonSet."""
+        if not self.coordinator.data:
+            return {}
+        daemonset_data = self.coordinator.data.get("daemonsets", {}).get(
+            f"{self.namespace}_{self.daemonset_name}"
+        )
+        if not daemonset_data:
+            return {}
+
+        return {
+            "namespace": daemonset_data.get("namespace", "N/A"),
+            "desired": daemonset_data.get("desired_number_scheduled", 0),
+            "current": daemonset_data.get("current_number_scheduled", 0),
+            "ready": daemonset_data.get("number_ready", 0),
+            "available": daemonset_data.get("number_available", 0),
+        }
+
+
+class KubernetesCronJobSensor(KubernetesBaseSensor):
+    """Sensor for an individual Kubernetes CronJob."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client: Any,
+        config_entry: ConfigEntry,
+        cronjob_name: str,
+        namespace: str,
+    ) -> None:
+        """Initialize the CronJob sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.cronjob_name = cronjob_name
+        self.namespace = namespace
+        self._attr_name = cronjob_name
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_cronjob_{namespace}_{cronjob_name}"
+        )
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:clock-outline"
+        self._attr_state_class = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_namespace_device_info(self.hass, self.config_entry, self.namespace)
+
+    @property
+    def native_value(self) -> str:
+        """Return the status of the CronJob."""
+        cronjob_data = self.coordinator.get_cronjob_data(
+            self.namespace, self.cronjob_name
+        )
+        if cronjob_data is None:
+            return "Unknown"
+
+        suspend_value = cronjob_data.get("suspend", False)
+        if isinstance(suspend_value, bool):
+            is_suspended = suspend_value
+        elif isinstance(suspend_value, str):
+            is_suspended = suspend_value.lower() in ("true", "1", "yes", "on")
+        else:
+            is_suspended = False
+
+        if is_suspended:
+            return "Suspended"
+        if cronjob_data.get("active_jobs_count", 0) > 0:
+            return "Active"
+        return "Scheduled"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes for the CronJob."""
+        cronjob_data = self.coordinator.get_cronjob_data(
+            self.namespace, self.cronjob_name
+        )
+        if not cronjob_data:
+            return {}
+
+        return {
+            "namespace": cronjob_data.get("namespace", self.namespace),
+            "schedule": cronjob_data.get("schedule", "N/A"),
+            "last_schedule_time": cronjob_data.get("last_schedule_time"),
+            "next_schedule_time": cronjob_data.get("next_schedule_time"),
+            "active_jobs_count": cronjob_data.get("active_jobs_count", 0),
+            ATTR_WORKLOAD_TYPE: WORKLOAD_TYPE_CRONJOB,
+        }
+
+
+class KubernetesJobSensor(KubernetesBaseSensor):
+    """Sensor for an individual Kubernetes Job."""
+
+    def __init__(
+        self,
+        coordinator: KubernetesDataCoordinator,
+        client: Any,
+        config_entry: ConfigEntry,
+        job_name: str,
+        namespace: str,
+    ) -> None:
+        """Initialize the Job sensor."""
+        super().__init__(coordinator, client, config_entry)
+        self.job_name = job_name
+        self.namespace = namespace
+        self._attr_name = job_name
+        self._attr_unique_id = f"{config_entry.entry_id}_job_{namespace}_{job_name}"
+        self._attr_native_unit_of_measurement = None
+        self._attr_icon = "mdi:briefcase-outline"
+        self._attr_state_class = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return get_namespace_device_info(self.hass, self.config_entry, self.namespace)
+
+    @property
+    def native_value(self) -> str:
+        """Return the status of the Job."""
+        job_data = self.coordinator.get_job_data(self.namespace, self.job_name)
+        if job_data is None:
+            return "Unknown"
+
+        completions = job_data.get("completions", 1)
+        succeeded = job_data.get("succeeded", 0)
+        active = job_data.get("active", 0)
+        failed = job_data.get("failed", 0)
+
+        if succeeded >= completions:
+            return "Complete"
+        if active > 0:
+            return "Running"
+        if failed > 0:
+            return "Failed"
+        return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes for the Job."""
+        job_data = self.coordinator.get_job_data(self.namespace, self.job_name)
+        if not job_data:
+            return {}
+
+        return {
+            "namespace": job_data.get("namespace", self.namespace),
+            "completions": job_data.get("completions", 1),
+            "succeeded": job_data.get("succeeded", 0),
+            "failed": job_data.get("failed", 0),
+            "active": job_data.get("active", 0),
+            "start_time": job_data.get("start_time"),
+            "completion_time": job_data.get("completion_time"),
+            ATTR_WORKLOAD_TYPE: WORKLOAD_TYPE_JOB,
+        }
+
+
+# Per-resource sensors discovered by _discover_simple, in one place. Only nodes
+# and cronjobs are gated by disabled_resources here; pods/daemonsets/jobs are
+# fully-disableable types whose bucket is simply empty when they are off.
+_SIMPLE_DISCOVERY: dict[str, _DiscoverySpec] = {
+    "node": _DiscoverySpec(
+        "nodes", KubernetesNodeSensor, lambda key, _item: (key,), "nodes"
+    ),
+    "pod": _DiscoverySpec(
+        "pods",
+        KubernetesPodSensor,
+        lambda _key, item: (
+            item.get("namespace", "default"),
+            item.get("name", "unknown"),
+        ),
+    ),
+    "daemonset": _DiscoverySpec(
+        "daemonsets", KubernetesDaemonSetSensor, _name_and_namespace
+    ),
+    "cronjob": _DiscoverySpec(
+        "cronjobs", KubernetesCronJobSensor, _name_and_namespace, "cronjobs"
+    ),
+    "job": _DiscoverySpec("jobs", KubernetesJobSensor, _name_and_namespace),
+}

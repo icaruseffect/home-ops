@@ -1,0 +1,33 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/instance: ping-exporter
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ping-exporter
+    app.kubernetes.io/version: 1.1.0
+    release: prometheus-stack
+  name: ping-exporter
+  namespace: observability
+spec:
+  endpoints:
+    - interval: 15s
+      path: /metrics
+      port: http
+      relabelings:
+        - action: replace
+          sourceLabels:
+            - __meta_kubernetes_service_name
+          targetLabel: service
+        - action: replace
+          sourceLabels:
+            - __meta_kubernetes_namespace
+          targetLabel: namespace
+      scheme: http
+  namespaceSelector:
+    matchNames:
+      - monitoring
+  selector:
+    matchLabels:
+      app: ping-exporter

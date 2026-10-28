@@ -1,0 +1,60 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zigbee2mqtt
+spec:
+  template:
+    spec:
+      serviceAccountName: zigbee2mqtt-monitor
+      containers:
+        - name: mqtt-monitor
+          image: bitnami/kubectl:1.28
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              echo "Starting MQTT monitor for zigbee2mqtt..."
+              while true; do
+                /scripts/healthcheck.sh
+                if [ $? -ne 0 ]; then
+                  echo "Health check failed, sleeping 60s before next check..."
+                  sleep 60
+                else
+                  echo "Health check passed, sleeping 30s..."
+                  sleep 30
+                fi
+              done
+          volumeMounts:
+            - name: healthcheck-script
+              mountPath: /scripts
+              readOnly: true
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: RESOURCE_NAME
+              value: "zigbee2mqtt"
+            - name: RESOURCE_TYPE
+              value: "deployment"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: healthcheck-script
+          configMap:
+            name: zigbee2mqtt-healthcheck
+            defaultMode: 0755

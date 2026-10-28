@@ -1,3 +1,4 @@
+---
 # Default values for adguard-home.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
@@ -105,7 +106,6 @@ services:
     # -- Dual-stack families for DNS; for dual-stack parameters see official kubernetes [dual-stack concept documentation](https://kubernetes.io/docs/concepts/services-networking/dual-stack/).
     ipFamilies:
       - IPv4
-      - IPv6
   dnsOverTls:
     enabled: true
     type: NodePort
@@ -125,7 +125,6 @@ services:
     # -- Dual-stack families for DNS over TLS; for dual-stack parameters see official kubernetes [dual-stack concept documentation](https://kubernetes.io/docs/concepts/services-networking/dual-stack/).
     ipFamilies:
       - IPv4
-      - IPv6
   dnsOverQuic:
     enabled: true
     type: NodePort
@@ -148,7 +147,6 @@ services:
     # -- Dual-stack families for DNS Over QUIC; for dual-stack parameters see official kubernetes [dual-stack concept documentation](https://kubernetes.io/docs/concepts/services-networking/dual-stack/).
     ipFamilies:
       - IPv4
-      - IPv6
   dnscrypt:
     enabled: true
     type: NodePort
@@ -171,19 +169,20 @@ services:
     # -- Dual-stack families for DNSCrypt; for dual-stack parameters see official kubernetes [dual-stack concept documentation](https://kubernetes.io/docs/concepts/services-networking/dual-stack/).
     ipFamilies:
       - IPv4
-      - IPv6
 
 # -- Additional services
 extraServices:
   - name: "dns-loadbalancer"
     annotations:
-      lbipam.cilium.io/ips: "192.168.8.20"
+      lbipam.cilium.io/ips: "192.168.8.20,fd1f:5691:b710:8::20"
+      service.kubernetes.io/healthcheck-nodeport: "32139"
     labels:
       homelab/public-service: "true"
     spec:
       type: LoadBalancer
       externalTrafficPolicy: Local
       internalTrafficPolicy: Cluster
+      healthCheckNodePort: 32139
       ipFamilyPolicy: PreferDualStack
       ipFamilies:
         - IPv4
@@ -201,7 +200,7 @@ extraServices:
 ingresses:
   http:
     enabled: true
-    className: ""
+    className: cilium
     annotations:
       cert-manager.io/cluster-issuer: ca-issuer
       k8s-gateway.dns/hostname: adguard.lab.lan
@@ -262,7 +261,11 @@ httproutes:
     #   - name: adguard-home-https
     #     port: 443
 
-resources: {}
+resources:
+  requests:
+    memory: 384Mi
+  limits:
+    memory: 768Mi
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
   # resources, such as Minikube. If you do want to specify resources, uncomment the following
@@ -451,93 +454,6 @@ bootstrapConfig:
     # -- Useful if Adguard Home is behind a reverse proxy already terminating TLS connections.
     allow_unencrypted_doh: true
     strict_sni_check: false
-    # -- sample self-signed certificate for my.dns.example.com. Valid for 3650 days.
-    certificate_chain: |-
-      -----BEGIN CERTIFICATE-----
-      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
-      aE+GBbiAOPS9w/eFLaASK/YLA3I95swb
-      -----END CERTIFICATE-----
-    # -- sample TLS Private key for my.dns.example.com
-    private_key: |-
-      -----BEGIN PRIVATE KEY-----
-      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
-      UdMaBW43oZ+E5o/yfWMcnVZCdlqd/A==
-      -----END PRIVATE KEY-----
     certificate_path: ""
     private_key_path: ""
   filters:

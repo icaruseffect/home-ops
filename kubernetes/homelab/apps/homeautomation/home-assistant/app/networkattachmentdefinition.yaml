@@ -1,0 +1,35 @@
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: macvlan-homeautomation
+  namespace: homeautomation
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "type": "macvlan",
+      "master": "enp0s25",
+      "mode": "bridge",
+      "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [
+            {
+              "subnet": "192.168.8.0/24",
+              "rangeStart": "192.168.8.250",
+              "rangeEnd": "192.168.8.254",
+              "gateway": "192.168.8.1"
+            }
+          ],
+          [
+            {
+              "subnet": "fd1f:5691:b710:9::/64",
+              "rangeStart": "fd1f:5691:b710:9::fa",
+              "rangeEnd": "fd1f:5691:b710:9::fe",
+              "gateway": "fd1f:5691:b710:9::1"
+            }
+          ]
+        ]
+      }
+    }

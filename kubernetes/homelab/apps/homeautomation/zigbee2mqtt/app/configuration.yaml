@@ -1,0 +1,76 @@
+---
+availability:
+  enabled: true
+  active:
+    timeout: 10
+  passive:
+    timeout: 1500
+advanced:
+  last_seen: ISO_8601
+  log_level: warning
+  log_output:
+    - console
+  network_key:
+    - 43
+    - 26
+    - 5
+    - 219
+    - 41
+    - 173
+    - 138
+    - 121
+    - 198
+    - 103
+    - 59
+    - 150
+    - 232
+    - 191
+    - 21
+    - 224
+  pan_id: 35953
+  ext_pan_id:
+    - 8
+    - 116
+    - 198
+    - 238
+    - 29
+    - 234
+    - 113
+    - 49
+  log_syslog:
+    app_name: Zigbee2MQTT
+    eol: /n
+    host: localhost
+    localhost: localhost
+    path: /dev/log
+    pid: process.pid
+    port: 514
+    protocol: udp4
+    type: "5424"
+frontend:
+  enabled: true
+  port: 8080
+  url: https://zigbee.lab.lan/
+  package: zigbee2mqtt-windfront
+homeassistant:
+  enabled: true
+  discovery_topic: homeassistant
+  status_topic: homeassistant/status
+mqtt:
+  base_topic: zigbee2mqtt
+  include_device_information: true
+  password: Fd34Aiud2~co77~7
+  server: mqtts://mqtt.lan
+  user: zigbee2mqtt
+  keepalive: 60
+  reject_unauthorized: false
+  version: 5
+  client_id: zigbee2mqtt-1
+serial:
+  port: /dev/ttyACM0
+  adapter: zstack
+devices: devices.yaml
+groups: groups.yaml
+version: 4
+health:
+  interval: 10

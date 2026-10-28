@@ -1,0 +1,26 @@
+---
+apiVersion: monitoring.giantswarm.io/v1alpha1
+kind: Silence
+metadata:
+  name: router-mem-low
+spec:
+  matchers:
+    - name: alertname
+      value: HostOutOfMemory
+      isRegex: false
+    - name: instance
+      value: router.lan:9100
+      isRegex: false
+---
+apiVersion: monitoring.giantswarm.io/v1alpha1
+kind: Silence
+metadata:
+  name: too-hot
+spec:
+  matchers:
+    - name: alertname
+      value: HostPhysicalComponentTooHot
+      isRegex: false
+    - name: kubernetes_node
+      value: homelab
+      isRegex: false

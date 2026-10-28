@@ -1,0 +1,161 @@
+"""Constants for the Kubernetes integration."""
+
+DOMAIN = "kubernetes"
+
+# Configuration keys
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_API_TOKEN = "api_token"  # nosec B105
+CONF_CA_CERT = "ca_cert"
+CONF_CLUSTER_NAME = "cluster_name"
+CONF_NAMESPACE = "namespace"
+CONF_MONITOR_ALL_NAMESPACES = "monitor_all_namespaces"
+CONF_VERIFY_SSL = "verify_ssl"
+CONF_USE_IN_CLUSTER = "use_in_cluster"
+CONF_DEVICE_GROUPING_MODE = "device_grouping_mode"
+
+# Standard mount path for the in-cluster ServiceAccount credentials.
+# See https://kubernetes.io/docs/tasks/run-application/access-api-from-pod/.
+IN_CLUSTER_SERVICE_ACCOUNT_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+IN_CLUSTER_TOKEN_PATH = f"{IN_CLUSTER_SERVICE_ACCOUNT_DIR}/token"  # nosec B105
+IN_CLUSTER_CA_PATH = f"{IN_CLUSTER_SERVICE_ACCOUNT_DIR}/ca.crt"
+
+# Device grouping modes
+DEVICE_GROUPING_MODE_NAMESPACE = "namespace"
+DEVICE_GROUPING_MODE_CLUSTER = "cluster"
+
+# Default values
+DEFAULT_PORT = 6443
+DEFAULT_CLUSTER_NAME = "default"
+DEFAULT_NAMESPACE = "default"
+DEFAULT_MONITOR_ALL_NAMESPACES = True
+DEFAULT_VERIFY_SSL = True
+DEFAULT_USE_IN_CLUSTER = False
+DEFAULT_DEVICE_GROUPING_MODE = DEVICE_GROUPING_MODE_NAMESPACE
+
+# Update intervals
+DEFAULT_SWITCH_UPDATE_INTERVAL = 60  # Default polling interval for switches
+DEFAULT_SCALE_VERIFICATION_TIMEOUT = 30  # Timeout for verifying scaling operations
+DEFAULT_SCALE_COOLDOWN = 10  # Cooldown period after scaling operations
+
+# Polling configuration keys
+CONF_SWITCH_UPDATE_INTERVAL = "switch_update_interval"
+CONF_SCALE_VERIFICATION_TIMEOUT = "scale_verification_timeout"
+CONF_SCALE_COOLDOWN = "scale_cooldown"
+
+# Panel
+CONF_ENABLE_PANEL = "enable_panel"
+DEFAULT_ENABLE_PANEL = True
+
+# Watch API (default; falls back to interval polling when disabled or failing)
+CONF_ENABLE_WATCH = "enable_watch"
+DEFAULT_ENABLE_WATCH = True
+DEFAULT_WATCH_TIMEOUT_SECONDS = 300  # ?timeoutSeconds for each watch stream
+DEFAULT_WATCH_RECONNECT_DELAY = 5  # initial reconnect backoff in seconds
+DEFAULT_FALLBACK_POLL_INTERVAL = 300  # coordinator poll interval when watch is active
+WATCH_MAX_RECONNECT_DELAY = 60  # cap on the jittered backoff (seconds)
+WATCH_RECONNECT_JITTER = 1.0  # max random jitter added to each backoff (seconds)
+WATCH_MAX_FAILURE_STREAK = 5  # consecutive failures before raising a repair issue
+WATCH_EARLY_CLOSE_SECONDS = 5  # empty stream closing faster than this = failure
+
+# Job/CronJob pods are ephemeral by design: every scheduled run creates a new
+# pod name, so each run leaves a permanent entry in Home Assistant's entity
+# registry (deleted entities belonging to a live config entry are never
+# purged). Excluded by default; set to False to get an entity per Job run.
+CONF_EXCLUDE_JOB_PODS = "exclude_job_pods"
+DEFAULT_EXCLUDE_JOB_PODS = True
+
+# Event platform (experimental, opt-in)
+CONF_ENABLE_EVENTS = "enable_events"
+DEFAULT_ENABLE_EVENTS = False
+CONF_EVENT_TYPES = "event_types"
+EVENT_TYPES_WARNING = "warning"  # fire only Warning-type events (default)
+EVENT_TYPES_ALL = "all"  # fire all events (Normal + Warning)
+DEFAULT_EVENT_TYPES = EVENT_TYPES_WARNING
+# k8s event reasons surfaced as distinct HA event_types; anything else -> EVENT_TYPE_OTHER
+EVENT_CURATED_REASONS = (
+    "OOMKilling",
+    "BackOff",
+    "Failed",
+    "FailedScheduling",
+    "FailedMount",
+    "FailedAttachVolume",
+    "Unhealthy",
+    "Evicted",
+    "FailedCreatePodSandBox",
+    "NodeNotReady",
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "Preempted",
+    "FailedKillPod",
+)
+EVENT_TYPE_OTHER = "other"
+
+
+def event_signal(entry_id: str) -> str:
+    """Dispatcher signal carrying a fired k8s event for a config entry."""
+    return f"{DOMAIN}_event_{entry_id}"
+
+
+# Data-collection opt-out (options flow multi-select)
+CONF_DISABLED_RESOURCES = "disabled_resources"
+# Categories whose API fetch is skipped entirely when disabled. The other
+# resource categories (nodes, deployments, statefulsets, cronjobs) keep their
+# fetch because switches read the coordinator data — disabling them only
+# suppresses their sensor entities.
+FULLY_DISABLEABLE_RESOURCES = frozenset(
+    {"pods", "daemonsets", "jobs", "ingresses", "services"}
+)
+# All categories offered in the options flow. "metrics" gates the Metrics API
+# (node usage + workload CPU/memory sensors); "counts" gates the aggregate
+# count sensors and their count API calls.
+DISABLABLE_RESOURCES = (
+    "pods",
+    "nodes",
+    "deployments",
+    "statefulsets",
+    "daemonsets",
+    "cronjobs",
+    "jobs",
+    "ingresses",
+    "services",
+    "metrics",
+    "counts",
+)
+
+
+# Workload types
+WORKLOAD_TYPE_DEPLOYMENT = "Deployment"
+WORKLOAD_TYPE_STATEFULSET = "StatefulSet"
+WORKLOAD_TYPE_DAEMONSET = "DaemonSet"
+WORKLOAD_TYPE_CRONJOB = "CronJob"
+WORKLOAD_TYPE_JOB = "Job"
+WORKLOAD_TYPE_POD = "Pod"
+
+# Service names
+SERVICE_SCALE_WORKLOAD = "scale_workload"
+SERVICE_START_WORKLOAD = "start_workload"
+SERVICE_STOP_WORKLOAD = "stop_workload"
+SERVICE_RESTART_WORKLOAD = "restart_workload"
+SERVICE_DELETE_JOB = "delete_job"
+SERVICE_CORDON_NODE = "cordon_node"
+SERVICE_UNCORDON_NODE = "uncordon_node"
+
+# Service attributes
+ATTR_WORKLOAD_NAME = "workload_name"
+ATTR_WORKLOAD_NAMES = "workload_names"
+ATTR_NAMESPACE = "namespace"
+ATTR_REPLICAS = "replicas"
+ATTR_JOB_NAME = "job_name"
+ATTR_JOB_NAMES = "job_names"
+ATTR_NODE_NAME = "node_name"
+ATTR_NODE_NAMES = "node_names"
+
+# Workload attributes
+ATTR_WORKLOAD_TYPE = "workload_type"
+
+# Panel configuration
+PANEL_TITLE = "Kubernetes"
+PANEL_ICON = "mdi:kubernetes"
+PANEL_URL = "/kubernetes_panel"
+PANEL_FILENAME = "kubernetes-panel.js"

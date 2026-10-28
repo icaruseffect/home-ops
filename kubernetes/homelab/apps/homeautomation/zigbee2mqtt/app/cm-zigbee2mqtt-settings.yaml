@@ -1,0 +1,28 @@
+---
+apiVersion: v1
+kind: ConfigMap
+data:
+  configuration.yaml: |
+    advanced:
+      homeassistant_discovery_topic: homeassistant
+      homeassistant_status_topic: homeassistant/status
+      last_seen: ISO_8601
+      log_level: info
+      log_output:
+      - console
+      network_key: GENERATE
+    experimental:
+      new_api: true
+    frontend:
+      port: 8080
+    homeassistant: true
+    mqtt:
+      base_topic: zigbee2mqtt
+      include_device_information: true
+      password: Fd34Aiud2~co77~7
+      server: mqtt://mqtt.lan
+      user: zigbee2mqtt
+    permit_join: true
+    serial:
+      port: /dev/serial/by-id/usb-Silicon_Labs_slae.sh_cc2652rb_stick_-_slaesh_s_iot_stuff_00_12_4B_00_23_93_22_DA-if00-port0
+      stack: vstack

@@ -1,0 +1,47 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: arris-exporter
+  namespace: observability
+  labels:
+    app.kubernetes.io/instance: arris-exporter
+    app.kubernetes.io/name: arris-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9706"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: arris-exporter
+      app.kubernetes.io/name: arris-exporter
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: arris-exporter
+        app.kubernetes.io/name: arris-exporter
+    spec:
+      containers:
+        - image: ghcr.io/icaruseffect/arris-tg3442de-exporter:main
+          #imagePullPolicy: IfNotPresent
+          name: arris-exporter
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "55M"
+          ports:
+            - containerPort: 9706
+              name: http
+          volumeMounts:
+            - mountPath: /config
+              name: config
+      volumes:
+        - name: config
+          secret:
+            secretName: arris-config
+      restartPolicy: Always

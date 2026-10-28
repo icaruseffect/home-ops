@@ -1,0 +1,54 @@
+---
+apiVersion: k8up.io/v1
+kind: Schedule
+metadata:
+  name: homeautomation
+  namespace: homeautomation
+spec:
+  backend:
+    repoPasswordSecretRef:
+      name: backup-repo
+      key: password
+    s3:
+      endpoint: https://eu2.contabostorage.com
+      bucket: backup-homelab/k8up/homeautomation
+      accessKeyIDSecretRef:
+        name: contabo-creds
+        key: username
+      secretAccessKeySecretRef:
+        name: contabo-creds
+        key: password
+
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+
+  backup:
+    # 03:00 — offset from paperless (02:30) so the two don't contend for the
+    # restic repo lock. /config is small (tens of MB without the recorder DB),
+    # so this finishes in seconds.
+    schedule: "0 3 * * *"
+    activeDeadlineSeconds: 1800
+    # Home Assistant writes /config as root:root 0600 (.storage/auth,
+    # .storage/auth_provider.homeassistant, ssh_keys/*). The k8up runner
+    # defaults to uid 65532 and got EPERM on 21 files — silently producing
+    # snapshots that restore to an HA instance with no users and no login.
+    # No non-root owner to match here, so the runner has to be root.
+    podSecurityContext:
+      runAsUser: 0
+      runAsGroup: 0
+
+  prune:
+    # Sunday 05:00 — deliberately after the paperless prune/check window
+    # (03:00/04:00). Prune needs exclusive access to the repository.
+    schedule: "0 5 * * 0"
+    retention:
+      # Higher keepLast than paperless: the realistic recovery scenario here
+      # is "I broke an automation / integration config two edits ago", not
+      # "the disk died". Snapshots are cheap — /config barely changes.
+      keepLast: 10
+      keepDaily: 14
+      keepWeekly: 8
+      keepMonthly: 6
+
+  check:
+    schedule: "0 6 * * 0"

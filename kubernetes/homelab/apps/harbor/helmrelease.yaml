@@ -1,0 +1,46 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: harbor
+  namespace: harbor
+spec:
+  releaseName: harbor
+  chart:
+    spec:
+      chart: harbor
+      # was floating ('*') - pinned to the currently-resolved version for
+      # reproducibility, surfaced while migrating redis to Dragonfly
+      version: 1.19.2
+      sourceRef:
+        kind: HelmRepository
+        name: harbor
+  interval: 50m
+  install:
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: ConfigMap
+      name: harbor-values
+      valuesKey: values.yaml
+  # harbor-core has no lifecycle/preStop hook exposed in chart values (checked
+  # templates/core/core-dpl.yaml @ v1.19.2 - the field isn't templated at all),
+  # so it's added post-render instead. Without it, a rolling harbor-core pod
+  # can have its veth torn down while kube-proxy's DNAT rule still points at
+  # its old IP, producing "no route to host" from jobservice (and any other
+  # client) for a few seconds during every core restart. A short preStop sleep
+  # keeps the pod's IP routable long enough for kube-proxy/endpoints to catch
+  # up before the container actually stops accepting connections.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: harbor-core
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/lifecycle
+                value:
+                  preStop:
+                    exec:
+                      command: ["sleep", "15"]

@@ -1,0 +1,7 @@
+---
+kind: Kustomization
+resources:
+  # - cm-ping-exporter.yaml
+  - ping-exporter-chart.yaml
+  - helmrelease.yaml
+  # - servicemonitor.yaml

@@ -1,0 +1,19 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MatthewsREIS/cnpg-charts/refs/heads/main/charts/cluster/values.schema.json
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: home-assistant-cnpg-cluster
+  namespace: homeautomation
+spec:
+  instances: 1
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+  monitoring:
+    enablePodMonitor: true
+  bootstrap:
+    initdb:
+      database: homeassistant
+      owner: hass
+      dataChecksums: true

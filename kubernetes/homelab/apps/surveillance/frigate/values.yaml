@@ -1,0 +1,316 @@
+---
+# Default values for frigate.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# -- upgrade strategy type (e.g. Recreate or RollingUpdate)
+strategyType: Recreate
+
+image:
+  # -- Docker registry/repository to pull the image from
+  repository: ghcr.io/blakeblackshear/frigate
+  # -- Overrides the default tag (appVersion) used in Chart.yaml ([Docker Hub](https://hub.docker.com/r/blakeblackshear/frigate/tags?page=1))
+  tag:
+  # -- Docker image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Docker image pull policy
+imagePullSecrets: []
+
+# -- additional ENV variables to set. Prefix with FRIGATE_ to target Frigate configuration values
+env: {}
+  # TZ: UTC
+
+# -- set environment variables from Secret(s)
+envFromSecrets: []
+  # secrets are required before `helm install`
+  # - frigate-rstp-credentials
+
+coral:
+  # -- enables the use of a Coral device
+  enabled: false
+  # -- path on the host to which to mount the Coral device
+  hostPath: /dev/bus/usb
+
+gpu:
+  nvidia:
+    # -- Enables NVIDIA GPU compatibility. Must also use the "amd64nvidia" tagged image
+    enabled: false
+
+    # -- Overrides the default runtimeClassName
+    runtimeClassName:
+
+# -- declare extra volumes to use for Frigate
+# NOTE: the Intel GPU device plugin is NOT installed on this node
+# (`kubectl describe node homelab` shows gpu.intel.com/i915 capacity: 0),
+# so we skip the gpu.intel.com/i915 extended resource entirely and just
+# hostPath-mount /dev/dri straight into the pod instead.
+extraVolumes:
+  - name: dri
+    hostPath:
+      path: /dev/dri
+      type: Directory
+
+# -- declare additional volume mounts
+extraVolumeMounts:
+  - name: dri
+    mountPath: /dev/dri
+
+# -- amount of shared memory to use for caching
+shmSize: 1Gi
+
+# -- use memory for tmpfs (mounted to /tmp)
+tmpfs:
+  enabled: true
+  sizeLimit: 1Gi
+
+# nameOverride -- Overrides the name of resources
+nameOverride: ""
+
+# fullnameOverride -- Overrides the Full Name of resources
+fullnameOverride: ""
+
+# -- frigate configuration - see [Docs](https://docs.frigate.video/configuration/index) for more info
+config: |
+  mqtt:
+    # Required: host name
+    host: mqtt.server.com
+    # Optional: port (default: shown below)
+    port: 1883
+    # Optional: topic prefix (default: shown below)
+    # WARNING: must be unique if you are running multiple instances
+    topic_prefix: frigate
+    # Optional: client id (default: shown below)
+    # WARNING: must be unique if you are running multiple instances
+    client_id: frigate
+    # Optional: user
+    user: mqtt_user
+    # Optional: password
+    # NOTE: Environment variables that begin with 'FRIGATE_' may be referenced in {}.
+    #       eg. password: '{FRIGATE_MQTT_PASSWORD}'
+    password: password
+    # Optional: interval in seconds for publishing stats (default: shown below)
+    stats_interval: 60
+
+  # OpenVINO detector running on the Intel iGPU (i915) found on `homelab`.
+  # The default SSDlite MobileNet v2 model ships inside the Frigate image
+  # at /openvino-model/, so no extra model download/init container is needed.
+  detectors:
+    ov:
+      type: openvino
+      device: GPU
+      model:
+        width: 300
+        height: 300
+        input_tensor: nhwc
+        input_pixel_format: bgr
+        path: /openvino-model/ssdlite_mobilenet_v2.xml
+        labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+    # Previous CPU-only detector, kept here for reference/rollback:
+    # cpu1:
+    #   type: cpu
+
+  # Use VAAPI for hardware-accelerated video decode on the same iGPU.
+  # This is separate from object detection above, but uses the same
+  # /dev/dri device, so it makes sense to enable while you're at it.
+  ffmpeg:
+    hwaccel_args: preset-vaapi
+
+  # cameras:
+  #   # Name of your camera
+  #   front_door:
+  #     ffmpeg:
+  #       inputs:
+  #         - path: rtsp://{FRIGATE_RSTP_USERNAME}:{FRIGATE_RTSP_PASSWORD}@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2
+  #           roles:
+  #             - detect
+  #             - rtmp
+  #     width: 1280
+  #     height: 720
+  #     fps: 5
+
+# Probes configuration
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 30
+    failureThreshold: 5
+    timeoutSeconds: 10
+  readiness:
+    enabled: true
+    initialDelaySeconds: 30
+    failureThreshold: 5
+    timeoutSeconds: 10
+  startup:
+    enabled: false
+    failureThreshold: 30
+    periodSeconds: 10
+
+service:
+  # -- Type of Service to use
+  type: ClusterIP
+  # -- Port the Service should communicate on
+  port: 5000
+  ## Specify the nodePort value for the LoadBalancer and NodePort service types.
+  ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
+  ##
+  # nodePort:
+  ## Provide any additional annotations which may be required. This can be used to
+  ## set the LoadBalancer service type to internal only.
+  ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
+  ##
+  annotations: {}
+  labels: {}
+
+  # -- Set specific IP address for LoadBalancer. `service.type` must be set to `LoadBalancer`
+  loadBalancerIP:
+
+  # loadBalancerSourceRanges: []
+  ## Set the externalTrafficPolicy in the Service to either Cluster or Local
+  # externalTrafficPolicy: Cluster
+
+  # default IP family to use for the service
+  ipFamilyPolicy: SingleStack
+  # ipFamilies for service
+  ipFamilies: []
+
+ingress:
+  # -- Enables the use of an Ingress Controller to front the Service and can provide HTTPS
+  enabled: true
+
+  # -- ingressClassName for using on clusters with multiple ingresses, default is null
+  # Left unset, same as adguard-home's Ingress ("Ingress Class: <none>") --
+  # the cluster's ingress controller still picks it up without one.
+  ingressClassName: ~
+
+  # -- annotations to configure your Ingress. See your Ingress Controller's Docs for more info.
+  annotations:
+    cert-manager.io/cluster-issuer: ca-issuer
+    k8s-gateway.dns/hostname: frigate.lab.lan
+
+  # -- list of hosts and their paths and ports that ingress controller should repsond to.
+  # -- alternatively use `http` if anonymous auth is allowed
+  hosts:
+    - host: frigate.lab.lan
+      paths:
+        - path: "/"
+          portName: http-auth
+
+  # -- list of TLS configurations
+  tls:
+    - secretName: frigate.lab.lan-tls
+      hosts:
+        - frigate.lab.lan
+
+persistence:
+  data:
+    # Data directory is obsolete. Use config and media instead.
+    enabled: false
+    accessMode: ReadWriteOnce
+    size: 10Gi
+    skipuninstall: false
+
+  config:
+    # -- Enables persistence for the config directory
+    enabled: true
+    ## frigate data Persistent Volume Storage Class
+    ## openebs-hostpath is already the cluster's default class, but pinning
+    ## it explicitly so this stays correct even if the default ever changes.
+    storageClass: openebs-hostpath
+    ##
+    ## If you want to reuse an existing claim, you can pass the name of the PVC using
+    ## the existingClaim variable
+    # existingClaim: your-claim
+    # subPath: some-subpath
+
+    # -- [access mode](https://kubernetes.io/docs/concepts/persistent-volumes/#access-modes) to use for the PVC
+    accessMode: ReadWriteOnce
+
+    # -- size/capacity of the PVC
+    # openebs-hostpath has AllowVolumeExpansion unset (no resize support),
+    # so size generously now rather than needing to recreate this later.
+    # Holds frigate.db (events/recognitions metadata) -- 1Gi is comfortable
+    # headroom for a single-camera setup.
+    size: 1Gi
+
+    # -- Do not delete the pvc upon helm uninstall
+    skipuninstall: true
+
+    ## Copy configMap config into volume to make writable
+    ## All live changes are lost when pod restarts, but this allows
+    ## an easy way to run migrations and edit config, then scrape
+    ## it from the API or copy out of the pod and update local helm values
+    ephemeralWritableConfigYaml: true
+
+  media:
+    # -- Enables persistence for the media directory
+    enabled: true
+    ## frigate data Persistent Volume Storage Class
+    storageClass: openebs-hostpath
+    ##
+    ## If you want to reuse an existing claim, you can pass the name of the PVC using
+    ## the existingClaim variable
+    # existingClaim: your-claim
+    # subPath: some-subpath
+
+    # -- [access mode](https://kubernetes.io/docs/concepts/persistent-volumes/#access-modes) to use for the PVC
+    accessMode: ReadWriteOnce
+
+    # -- size/capacity of the PVC
+    # Recordings/clips/snapshots live here -- size against your
+    # record/retain settings under config.cameras.*.record, not just
+    # node disk space. No resize support on this StorageClass (see
+    # AllowVolumeExpansion above), so go generous up front.
+    size: 50Gi
+
+    # -- Do not delete the pvc upon helm uninstall
+    skipuninstall: true
+
+# -- Set resource limits/requests for the Pod(s)
+# No gpu.intel.com/i915 entry here on purpose -- see note above extraVolumes.
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# -- Set Frigate Container Security Context
+# `privileged: true` is the simplest way to guarantee access to /dev/dri
+# regardless of what GID the render/video group has on the host.
+# If you'd rather avoid privileged and use least-privilege instead, run
+# `stat -c '%g' /dev/dri/renderD128` on homelab to get the render group's
+# GID, remove privileged below, and instead set:
+#   podSecurityContext:
+#     supplementalGroups: [<that GID>]
+securityContext:
+  privileged: true
+
+# -- Set Pod level Security Context
+# -- the container level securiy context defined above
+# -- will override it for frigate container
+podSecurityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+  # fsGroup: 1000
+  # privileged: true
+
+# -- Node Selector configuration
+nodeSelector: {}
+
+# -- Node toleration configuration
+tolerations: []
+
+# -- Set Pod affinity rules
+affinity: {}
+
+# -- Set additonal pod Annotations
+podAnnotations: {}
+
+# -- Define extra init containers
+extraInitContainers: []

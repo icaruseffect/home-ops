@@ -1,0 +1,15 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: arris-exporter
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: arris-exporter
+      app.kubernetes.io/name: arris-exporter
+  endpoints:
+    - port: http
+      interval: 30s
+      path: /metrics

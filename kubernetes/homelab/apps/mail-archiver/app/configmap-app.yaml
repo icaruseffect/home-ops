@@ -1,0 +1,32 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mail-archiver-config
+  namespace: mail-archiver
+data:
+  # Authentication Settings
+  Authentication__Enabled: "true"
+  Authentication__SessionTimeoutMinutes: "60"
+  Authentication__CookieName: "MailArchiverAuth"
+
+  # MailSync Settings
+  MailSync__IntervalMinutes: "15"
+  MailSync__TimeoutMinutes: "60"
+  MailSync__ConnectionTimeoutSeconds: "180"
+  MailSync__CommandTimeoutSeconds: "300"
+
+  # BatchRestore Settings
+  BatchRestore__AsyncThreshold: "50"
+  BatchRestore__MaxSyncEmails: "150"
+  BatchRestore__MaxAsyncEmails: "50000"
+  BatchRestore__SessionTimeoutMinutes: "30"
+  BatchRestore__DefaultBatchSize: "50"
+
+  # BatchOperation Settings
+  BatchOperation__BatchSize: "50"
+  BatchOperation__PauseBetweenEmailsMs: "50"
+  BatchOperation__PauseBetweenBatchesMs: "250"
+
+  # Npgsql Settings
+  Npgsql__CommandTimeout: "900"

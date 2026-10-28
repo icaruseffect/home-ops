@@ -1,0 +1,29 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: frigate
+  namespace: homeautomation
+spec:
+  interval: 15m
+  chart:
+    spec:
+      chart: frigate
+      sourceRef:
+        kind: HelmRepository
+        name: blakeshome-charts
+        namespace: surveillance
+      # Pin this once you know which version you're targeting;
+      # leaving unset tracks the latest chart version on each reconcile.
+      version: "*"
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  valuesFrom:
+    - kind: ConfigMap
+      name: frigate-values
+      valuesKey: values-simulation.yaml

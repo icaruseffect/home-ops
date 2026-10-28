@@ -1,0 +1,11 @@
+---
+persistence:
+  data:
+    enabled: true
+    storageClass: openebs-hostpath
+image:
+  args:
+    - --model
+    - tiny-int8
+    - --language
+    - de

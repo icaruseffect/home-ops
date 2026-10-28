@@ -1,14 +1,16 @@
 ---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: music-assistant
+  name: music-assistant-server
   namespace: music
 spec:
   interval: 30m
+  timeout: 10m
   chart:
     spec:
-      chart: music-assistant
+      chart: music-assistant-server
       sourceRef:
         kind: HelmRepository
         name: andibraeu
@@ -21,51 +23,53 @@ spec:
     cleanupOnFail: true
     remediation:
       retries: 3
-  values:
-    service:
-      stream:
-        type: LoadBalancer
-        ipFamilyPolicy: PreferDualStack
-        ipFamilies:
-          - IPv4
-          - IPv6
-        annotations:
-          lbipam.cilium.io/ips: "192.168.8.19"
-        ports:
-          stream:
-            port: 8095
-            protocol: TCP
-      web:
-        type: LoadBalancer
-        ipFamilyPolicy: PreferDualStack
-        ipFamilies:
-          - IPv4
-          - IPv6
-        annotations:
-          lbipam.cilium.io/ips: "192.168.8.19"
-        ports:
-          web:
-            port: 8095
-            protocol: TCP
-      slimproto-tcp:
-        type: NodePort
-        ipFamilyPolicy: PreferDualStack
-        ipFamilies:
-          - IPv4
-          - IPv6
-        ports:
-          slimproto:
-            port: 3483
-            nodePort: 30931
-            protocol: TCP
-      slimproto-udp:
-        type: NodePort
-        ipFamilyPolicy: PreferDualStack
-        ipFamilies:
-          - IPv4
-          - IPv6
-        ports:
-          slimproto:
-            port: 3483
-            nodePort: 31530
-            protocol: UDP
+  valuesFrom:
+    - kind: ConfigMap
+      name: music-assistant-server-values
+      valuesKey: values.yaml
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: music-assistant-server
+            patch: |
+              # ports/0 is containerPort 8095 (web), ports/1 is 8097 (stream).
+              # MA's streams.publish_ip is the node IP, so both must be
+              # reachable there; hostPort keeps that true without hostNetwork.
+              - op: add
+                path: /spec/template/spec/containers/0/ports/0/hostPort
+                value: 8095
+              - op: add
+                path: /spec/template/spec/containers/0/ports/1/hostPort
+                value: 8097
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: ca-bundle
+                  configMap:
+                    name: home-ca.lan
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  name: ca-bundle
+                  mountPath: /etc/ssl/custom
+                  readOnly: true
+              - op: add
+                path: /spec/template/spec/containers/0/env
+                value:
+                  - name: REQUESTS_CA_BUNDLE
+                    value: /etc/ssl/custom/root-certs.pem
+                  - name: SSL_CERT_FILE
+                    value: /etc/ssl/custom/root-certs.pem
+              # The chart exposes no `resources` value, so set it here. Measured
+              # 2026-10-02 while streaming: ~1.0Gi working set, 1.5Gi peak
+              # (VmHWM). Was BestEffort on a memory-starved single node.
+              - op: add
+                path: /spec/template/spec/containers/0/resources
+                value:
+                  requests:
+                    cpu: 100m
+                    memory: 1Gi
+                  limits:
+                    memory: 2Gi

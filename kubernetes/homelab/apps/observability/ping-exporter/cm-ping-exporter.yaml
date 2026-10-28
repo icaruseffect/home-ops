@@ -1,0 +1,35 @@
+---
+apiVersion: v1
+data:
+  config.yml: |
+    dns:
+      nameserver: 1.1.1.1
+      refresh: 2m15s
+    ping:
+      history-size: 42
+      interval: 2s
+      payload-size: 120
+      timeout: 3s
+    targets:
+    - 8.8.8.8
+    - 8.8.4.4
+    - 2001:4860:4860::8888
+    - 2001:4860:4860::8844
+    - google.com
+kind: ConfigMap
+metadata:
+  annotations:
+    meta.helm.sh/release-name: ping-exporter
+    meta.helm.sh/release-namespace: monitoring
+  labels:
+    app.kubernetes.io/instance: ping-exporter
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ping-exporter
+    app.kubernetes.io/version: 1.1.0
+    helm.sh/chart: ping-exporter-1.1.0
+    helm.toolkit.fluxcd.io/name: ping-exporter
+    helm.toolkit.fluxcd.io/namespace: monitoring
+  name: ping-exporter
+  namespace: monitoring
+  resourceVersion: "163526092"
+  uid: 6e19eb6f-a649-44e1-9e5b-0d0fe0fa597d

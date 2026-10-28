@@ -1,0 +1,1214 @@
+"""Data coordinator for Kubernetes integration."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from datetime import timedelta
+import logging
+import random
+import time
+from time import monotonic
+from typing import Any
+
+import aiohttp
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .const import (
+    CONF_DISABLED_RESOURCES,
+    CONF_ENABLE_EVENTS,
+    CONF_ENABLE_WATCH,
+    CONF_EVENT_TYPES,
+    CONF_SWITCH_UPDATE_INTERVAL,
+    DEFAULT_ENABLE_EVENTS,
+    DEFAULT_ENABLE_WATCH,
+    DEFAULT_EVENT_TYPES,
+    DEFAULT_FALLBACK_POLL_INTERVAL,
+    DEFAULT_SWITCH_UPDATE_INTERVAL,
+    DEFAULT_WATCH_RECONNECT_DELAY,
+    DOMAIN,
+    EVENT_TYPES_ALL,
+    FULLY_DISABLEABLE_RESOURCES,
+    WATCH_EARLY_CLOSE_SECONDS,
+    WATCH_MAX_FAILURE_STREAK,
+    WATCH_MAX_RECONNECT_DELAY,
+    WATCH_RECONNECT_JITTER,
+    event_signal,
+)
+from .device import (
+    cleanup_orphaned_namespace_devices,
+    get_all_namespaces,
+    update_cluster_device_version,
+)
+from .kubernetes_client import (
+    KubernetesApiError,
+    KubernetesClient,
+    ResourceVersionExpired,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class WatchStreamClosedEarly(Exception):
+    """A watch stream closed within WATCH_EARLY_CLOSE_SECONDS without any event.
+
+    A healthy stream stays open until the server's ``timeoutSeconds`` even on
+    a quiet resource, so an HTTP 200 stream that ends almost at once with
+    nothing in it is a server-side failure the status line did not show.
+    Raising it inside the watch loops routes it through their backoff and
+    failure streak instead of the immediate "clean end" reconnect, which is
+    what turned issue #431 into a tight loop.
+    """
+
+
+ISSUE_METRICS_SERVER_UNAVAILABLE = "metrics_server_unavailable"
+METRICS_SERVER_LEARN_MORE_URL = "https://github.com/kubernetes-sigs/metrics-server"
+ISSUE_WATCH_CONNECTION_FAILING = "watch_connection_failing"
+WATCH_LEARN_MORE_URL = (
+    "https://kubernetes.io/docs/reference/using-api/api-concepts/"
+    "#efficient-detection-of-changes"
+)
+ISSUE_WATCH_FORBIDDEN = "watch_forbidden"
+RBAC_LEARN_MORE_URL = (
+    "https://github.com/tibuntu/homeassistant-kubernetes/blob/main/docs/RBAC.md"
+)
+
+
+def _reconnect_delay(failure_streak: int) -> float:
+    """Jittered exponential backoff for a failing watch loop, capped."""
+    return min(
+        DEFAULT_WATCH_RECONNECT_DELAY * 2 ** (failure_streak - 1),
+        WATCH_MAX_RECONNECT_DELAY,
+    ) + random.uniform(0, WATCH_RECONNECT_JITTER)  # nosec B311
+
+
+def _forbidden_retry_delay() -> float:
+    """Delay before a watch loop retries after HTTP 403: the backoff cap."""
+    return WATCH_MAX_RECONNECT_DELAY + random.uniform(  # nosec B311
+        0, WATCH_RECONNECT_JITTER
+    )
+
+
+# Namespace-scoped watch resources: (resource_type, api_group, plural,
+# client parse-method name). Nodes are cluster-scoped and handled separately
+# in _build_watch_configs. Used to build both the cluster-wide URL
+# (f"{base_url}/{api_group}/{plural}") and the per-namespace URL (with
+# "/namespaces/{ns}" inserted before the plural).
+_NAMESPACED_WATCH_RESOURCES: tuple[tuple[str, str, str, str], ...] = (
+    ("pods", "api/v1", "pods", "_parse_pod_item"),
+    ("deployments", "apis/apps/v1", "deployments", "_parse_deployment_item"),
+    ("statefulsets", "apis/apps/v1", "statefulsets", "_parse_statefulset_item"),
+    ("daemonsets", "apis/apps/v1", "daemonsets", "_parse_daemonset_item"),
+    ("cronjobs", "apis/batch/v1", "cronjobs", "_format_cronjob_from_dict"),
+    ("jobs", "apis/batch/v1", "jobs", "_format_job_from_dict"),
+    (
+        "ingresses",
+        "apis/networking.k8s.io/v1",
+        "ingresses",
+        "_parse_ingress_item",
+    ),
+    ("services", "api/v1", "services", "_parse_service_item"),
+)
+
+
+@dataclass
+class KubernetesEntryData:
+    """Per-config-entry runtime data (quality scale: runtime-data).
+
+    Stored on ``entry.runtime_data``; Home Assistant discards it on unload.
+    The ``*_add_entities`` callbacks and ``*_pending_unique_ids`` sets are
+    filled in by the platforms for dynamic entity discovery.
+    """
+
+    config: Mapping[str, Any]
+    client: KubernetesClient
+    coordinator: KubernetesDataCoordinator
+    sensor_add_entities: AddEntitiesCallback | None = None
+    sensor_pending_unique_ids: set[str] = field(default_factory=set)
+    binary_sensor_add_entities: AddEntitiesCallback | None = None
+    binary_sensor_pending_unique_ids: set[str] = field(default_factory=set)
+    switch_add_entities: AddEntitiesCallback | None = None
+    switch_pending_unique_ids: set[str] = field(default_factory=set)
+
+
+type KubernetesConfigEntry = ConfigEntry[KubernetesEntryData]
+
+
+@callback
+def get_loaded_entries(hass: HomeAssistant) -> list[KubernetesConfigEntry]:
+    """Return the loaded Kubernetes config entries."""
+    return hass.config_entries.async_loaded_entries(DOMAIN)
+
+
+@callback
+def disabled_resources(entry: ConfigEntry) -> frozenset[str]:
+    """Return the data categories the user opted out of collecting."""
+    return frozenset(entry.options.get(CONF_DISABLED_RESOURCES, ()))
+
+
+class KubernetesDataCoordinator(DataUpdateCoordinator):
+    """Class to manage fetching Kubernetes data."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config_entry: ConfigEntry,
+        client: KubernetesClient,
+    ) -> None:
+        """Initialize the coordinator."""
+        # When watch is enabled, polling becomes a long-interval fallback.
+        watch_enabled = config_entry.options.get(
+            CONF_ENABLE_WATCH, DEFAULT_ENABLE_WATCH
+        )
+        poll_interval = config_entry.data.get(
+            CONF_SWITCH_UPDATE_INTERVAL, DEFAULT_SWITCH_UPDATE_INTERVAL
+        )
+        update_interval = (
+            DEFAULT_FALLBACK_POLL_INTERVAL if watch_enabled else poll_interval
+        )
+
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_{config_entry.entry_id}",
+            update_interval=timedelta(seconds=update_interval),
+        )
+
+        # Set attributes after super().__init__() to ensure they're not overridden
+        self.config_entry = config_entry
+        self.client = client
+        self._watch_enabled = watch_enabled
+        self._poll_interval = poll_interval
+
+        # Data categories the user opted out of; the coordinator is rebuilt on
+        # every options change (entry reload), so reading once here is enough.
+        self._disabled: frozenset[str] = disabled_resources(config_entry)
+
+        # Watch API state
+        self._watch_tasks: list[asyncio.Task] = []
+        self._watch_stop_event: asyncio.Event = asyncio.Event()
+        # Prevents watch events from modifying self.data while a poll is building
+        # a replacement dict. Without this, watch changes are lost when the poll
+        # overwrites self.data.
+        self._data_lock: asyncio.Lock = asyncio.Lock()
+
+        self._metrics_issue_active: bool = False
+        self._watch_issue_active: bool = False
+        self._failing_watch_loops: set[str] = set()
+        # Per-(resource_type, url) loop key -> resource type, for every loop
+        # whose last attempt got HTTP 403. Feeds the watch_forbidden repair
+        # issue and detects when *every* watch task is forbidden; a loop drops
+        # out again once its retry lists successfully.
+        self._forbidden_loops: dict[str, str] = {}
+
+    @property
+    def _forbidden_resources(self) -> set[str]:
+        """Resource types with at least one currently forbidden watch loop."""
+        return set(self._forbidden_loops.values())
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Update data via Kubernetes client.
+
+        Holds _data_lock for the entire fetch cycle so that watch events
+        queue up and apply *after* self.data is replaced with the fresh
+        snapshot, preventing lost updates.
+        """
+        async with self._data_lock:
+            try:
+                _LOGGER.debug("Updating Kubernetes data for coordinator")
+                disabled = self._disabled
+                include_metrics = "metrics" not in disabled
+
+                # Switch-bearing resources are always fetched — their switches
+                # read this data. Opting them out only suppresses their sensors.
+                deployments = await self.client.get_deployments(
+                    include_metrics=include_metrics
+                )
+                statefulsets = await self.client.get_statefulsets(
+                    include_metrics=include_metrics
+                )
+                cronjobs = await self.client.get_cronjobs()
+
+                # Fully-off resources skip their fetch entirely.
+                daemonsets = (
+                    []
+                    if "daemonsets" in disabled
+                    else await self.client.get_daemonsets()
+                )
+                jobs = [] if "jobs" in disabled else await self.client.get_jobs()
+                ingresses = (
+                    [] if "ingresses" in disabled else await self.client.get_ingresses()
+                )
+                services = (
+                    [] if "services" in disabled else await self.client.get_services()
+                )
+
+                _LOGGER.debug("Starting to fetch detailed node information")
+                nodes = await self.client.get_nodes()
+                _LOGGER.debug(
+                    "Successfully fetched %d nodes with detailed information",
+                    len(nodes),
+                )
+
+                pods: list[dict[str, Any]] = []
+                if "pods" not in disabled:
+                    _LOGGER.debug("Starting to fetch detailed pod information")
+                    pods = await self.client.get_pods()
+                    _LOGGER.debug(
+                        "Successfully fetched %d pods with detailed information",
+                        len(pods),
+                    )
+
+                # pods_count comes from the parsed list whenever pods were
+                # fetched: the raw count endpoint still includes Job-owned pods
+                # that _parse_pods_data drops, and the watch path derives the
+                # count from len(data["pods"]) — mixing the two sources makes
+                # the count sensor oscillate between polls and watch events.
+                pods_count = len(pods)
+                if "counts" not in disabled:
+                    nodes_count = await self.client.get_nodes_count()
+                    if "pods" in disabled:
+                        pods_count = await self.client.get_pods_count()
+                else:
+                    nodes_count = len(nodes)
+                    if "pods" in disabled:
+                        # get_pods/get_pods_count carry the client's connection
+                        # probe — the single source of the reauth signal. Neither
+                        # ran this cycle, so probe explicitly to keep a
+                        # persistent 401 triggering reauthentication.
+                        await self.client.is_cluster_healthy()
+
+                # The client's connection probe (run by the pod calls or the
+                # explicit call above) confirmed a 401, so the stored token is
+                # no longer valid. Bail out before the cleanup below: every
+                # fetch returned empty, and continuing would prune the user's
+                # entities and namespace devices as if the cluster had been
+                # emptied.
+                # Compared with `is True` because coordinator tests pass a
+                # MagicMock client, whose attributes are always truthy.
+                if self.client.auth_failed is True:
+                    raise ConfigEntryAuthFailed(
+                        "Kubernetes API rejected the configured token"
+                    )
+
+                # Fetch node metrics (CPU/memory usage) — best-effort. Skipped
+                # entirely (incl. the repair issue) when metrics are opted out.
+                node_metrics: dict[str, Any] = {}
+                if include_metrics:
+                    node_metrics = await self.client.get_node_metrics()
+                    if node_metrics:
+                        _LOGGER.debug("Fetched metrics for %d nodes", len(node_metrics))
+                        for node in nodes:
+                            name = node.get("name")
+                            if name and name in node_metrics:
+                                node["cpu_usage_millicores"] = node_metrics[name]["cpu"]
+                                node["memory_usage_mib"] = node_metrics[name]["memory"]
+                    self._sync_metrics_repair_issue(nodes, node_metrics)
+
+                # Log node names for debugging
+                if nodes:
+                    node_names = [node.get("name", "Unknown") for node in nodes]
+                    _LOGGER.debug("Fetched nodes: %s", node_names)
+
+                # Best-effort and runs after the auth check above: a dead token
+                # has already aborted the cycle, so swallowing a 401 here is
+                # harmless. A failed fetch keeps the last known version so the
+                # panel doesn't flicker.
+                server_version = await self.client.get_server_version() or (
+                    self.data or {}
+                ).get("server_version")
+
+                # Create a lookup dictionary for quick access. Namespaced
+                # resources are keyed by "{namespace}_{name}" so that
+                # same-named workloads in different namespaces don't collide.
+                data = {
+                    "deployments": {
+                        f"{d['namespace']}_{d['name']}": d for d in deployments
+                    },
+                    "statefulsets": {
+                        f"{s['namespace']}_{s['name']}": s for s in statefulsets
+                    },
+                    "daemonsets": {
+                        f"{d['namespace']}_{d['name']}": d for d in daemonsets
+                    },
+                    "cronjobs": {f"{c['namespace']}_{c['name']}": c for c in cronjobs},
+                    "jobs": {f"{j['namespace']}_{j['name']}": j for j in jobs},
+                    "ingresses": {
+                        f"{i['namespace']}_{i['name']}": i for i in ingresses
+                    },
+                    "services": {f"{s['namespace']}_{s['name']}": s for s in services},
+                    "nodes": {node["name"]: node for node in nodes},
+                    "pods": {f"{pod['namespace']}_{pod['name']}": pod for pod in pods},
+                    "pods_count": pods_count,
+                    "nodes_count": nodes_count,
+                    "server_version": server_version,
+                    "last_update": time.time(),
+                }
+
+                # Count sensors normally derive from len(bucket); for fully-off
+                # resources the bucket is empty, so fetch the cheap count
+                # endpoints instead while counts stay enabled. The sensors
+                # prefer these keys when present.
+                if "counts" not in disabled:
+                    if "daemonsets" in disabled:
+                        data[
+                            "daemonsets_count"
+                        ] = await self.client.get_daemonsets_count()
+                    if "jobs" in disabled:
+                        data["jobs_count"] = await self.client.get_jobs_count()
+                    if "ingresses" in disabled:
+                        data[
+                            "ingresses_count"
+                        ] = await self.client.get_ingresses_count()
+                    if "services" in disabled:
+                        data["services_count"] = await self.client.get_services_count()
+
+                _LOGGER.debug(
+                    "Successfully updated Kubernetes data: %d deployments, %d statefulsets, %d daemonsets, %d cronjobs, %d jobs, %d ingresses, %d services, %d pods (detailed: %d), %d nodes (detailed: %d)",
+                    len(deployments),
+                    len(statefulsets),
+                    len(daemonsets),
+                    len(cronjobs),
+                    len(jobs),
+                    len(ingresses),
+                    len(services),
+                    pods_count,
+                    len(pods),
+                    nodes_count,
+                    len(nodes),
+                )
+
+                update_cluster_device_version(
+                    self.hass, self.config_entry, server_version
+                )
+
+                # Clean up entities for resources that no longer exist
+                await self._cleanup_orphaned_entities(data)
+
+                # Clean up orphaned namespace devices
+                current_namespaces = get_all_namespaces(data)
+                await cleanup_orphaned_namespace_devices(
+                    self.hass, self.config_entry, current_namespaces
+                )
+
+                return data
+
+            except ConfigEntryAuthFailed:
+                # Must not be re-wrapped: Home Assistant starts the reauth flow
+                # only for ConfigEntryAuthFailed, not for UpdateFailed.
+                raise
+            except Exception as ex:
+                # The client's list/count methods raise on any failure, so a
+                # 401 aborts the fetch before the in-line check above runs.
+                # Route it to reauth instead of UpdateFailed. A non-200 from
+                # a fetch that runs before the pods call aborts the cycle
+                # before the probe, so probe here or a dead token would
+                # never reach reauth (issue #408).
+                if (
+                    isinstance(ex, KubernetesApiError)
+                    and self.client.auth_failed is not True
+                ):
+                    await self.client.is_cluster_healthy()
+                if self.client.auth_failed is True:
+                    raise ConfigEntryAuthFailed(
+                        "Kubernetes API rejected the configured token"
+                    ) from ex
+                _LOGGER.error("Failed to update Kubernetes data: %s", ex)
+                raise UpdateFailed(f"Failed to update Kubernetes data: {ex}") from ex
+
+    def get_cronjob_data(
+        self, namespace: str, cronjob_name: str
+    ) -> dict[str, Any] | None:
+        """Get cronjob data by namespace and name."""
+        if not self.data or "cronjobs" not in self.data:
+            return None
+        return self.data["cronjobs"].get(f"{namespace}_{cronjob_name}")
+
+    def get_job_data(self, namespace: str, job_name: str) -> dict[str, Any] | None:
+        """Get job data by namespace and name."""
+        if not self.data or "jobs" not in self.data:
+            return None
+        return self.data["jobs"].get(f"{namespace}_{job_name}")
+
+    def get_node_data(self, node_name: str) -> dict[str, Any] | None:
+        """Get node data by name."""
+        if not self.data or "nodes" not in self.data:
+            _LOGGER.debug(
+                "No coordinator data or nodes data available for node %s", node_name
+            )
+            return None
+
+        node_data = self.data["nodes"].get(node_name)
+        if node_data is None:
+            _LOGGER.warning(
+                "Node %s not found in coordinator data. Available nodes: %s",
+                node_name,
+                list(self.data["nodes"].keys()),
+            )
+        else:
+            _LOGGER.debug(
+                "Retrieved data for node %s: status=%s",
+                node_name,
+                node_data.get("status", "Unknown"),
+            )
+        return node_data
+
+    def get_all_nodes_data(self) -> dict[str, dict[str, Any]]:
+        """Get all nodes data."""
+        if not self.data or "nodes" not in self.data:
+            return {}
+        return self.data["nodes"]
+
+    def get_pod_data(self, namespace: str, pod_name: str) -> dict[str, Any] | None:
+        """Get pod data by namespace and name."""
+        if not self.data or "pods" not in self.data:
+            return None
+        pod_key = f"{namespace}_{pod_name}"
+        return self.data["pods"].get(pod_key)
+
+    def get_all_pods_data(self) -> dict[str, dict[str, Any]]:
+        """Get all pods data."""
+        if not self.data or "pods" not in self.data:
+            return {}
+        return self.data["pods"]
+
+    def _build_expected_unique_ids(self, current_data: dict[str, Any]) -> set[str]:
+        """Build the set of unique_ids that should exist based on current data.
+
+        Uses the same format strings as the entity classes so there is no
+        ambiguous parsing of underscore-delimited IDs.
+        """
+        eid = self.config_entry.entry_id
+        disabled = self._disabled
+        expected: set[str] = set()
+
+        # Count sensors (unless opted out — the orphan cleanup below then
+        # removes them, which is how disabling a category prunes its entities)
+        if "counts" not in disabled:
+            for suffix in (
+                "pods_count",
+                "nodes_count",
+                "deployments_count",
+                "statefulsets_count",
+                "daemonsets_count",
+                "cronjobs_count",
+                "jobs_count",
+                "ingresses_count",
+                "services_count",
+            ):
+                expected.add(f"{eid}_{suffix}")
+
+        # Cluster health binary sensor
+        expected.add(f"{eid}_cluster_health")
+
+        # Node sensors + schedulable switches + node condition binary sensors.
+        # The schedulable switch survives the "nodes" opt-out.
+        for node_name in current_data.get("nodes", {}):
+            expected.add(f"{eid}_node_{node_name}_schedulable")
+            if "nodes" in disabled:
+                continue
+            expected.add(f"{eid}_node_{node_name}")
+            for condition in (
+                "memory_pressure",
+                "disk_pressure",
+                "pid_pressure",
+                "network_unavailable",
+            ):
+                expected.add(f"{eid}_node_{node_name}_{condition}")
+
+        # Pod sensors: pod_{namespace}_{pod_name}
+        for pod_key, pod_data in current_data.get("pods", {}).items():
+            namespace = pod_data.get("namespace", "default")
+            pod_name = pod_data.get("name", pod_key)
+            expected.add(f"{eid}_pod_{namespace}_{pod_name}")
+
+        # Deployment/StatefulSet switches: {namespace}_{name}_{type}
+        # Status sensors: {namespace}_{name}_{type}_status
+        # Metric sensors: {namespace}_{name}_{type}_{metric}
+        # Switches survive the per-type opt-out; sensors don't.
+        for workload_type in ("deployment", "statefulset"):
+            sensors_disabled = f"{workload_type}s" in disabled
+            for data in current_data.get(f"{workload_type}s", {}).values():
+                namespace = data.get("namespace", "default")
+                name = data.get("name", "")
+                expected.add(f"{eid}_{namespace}_{name}_{workload_type}")
+                if sensors_disabled:
+                    continue
+                expected.add(f"{eid}_{namespace}_{name}_{workload_type}_status")
+                if "metrics" not in disabled:
+                    for metric in ("cpu", "memory"):
+                        expected.add(
+                            f"{eid}_{namespace}_{name}_{workload_type}_{metric}"
+                        )
+
+        # DaemonSet sensors: daemonset_{namespace}_{name}
+        for data in current_data.get("daemonsets", {}).values():
+            namespace = data.get("namespace", "default")
+            expected.add(f"{eid}_daemonset_{namespace}_{data.get('name', '')}")
+
+        # CronJob sensors: cronjob_{namespace}_{name}
+        # CronJob switches: {namespace}_{name}_cronjob (survive the opt-out)
+        for data in current_data.get("cronjobs", {}).values():
+            namespace = data.get("namespace", "default")
+            name = data.get("name", "")
+            if "cronjobs" not in disabled:
+                expected.add(f"{eid}_cronjob_{namespace}_{name}")
+            expected.add(f"{eid}_{namespace}_{name}_cronjob")
+
+        # Job sensors: job_{namespace}_{name}
+        for data in current_data.get("jobs", {}).values():
+            namespace = data.get("namespace", "default")
+            expected.add(f"{eid}_job_{namespace}_{data.get('name', '')}")
+
+        return expected
+
+    async def _cleanup_orphaned_entities(self, current_data: dict[str, Any]) -> None:
+        """Remove entities for Kubernetes resources that no longer exist."""
+        try:
+            if not self.config_entry or not hasattr(self.config_entry, "entry_id"):
+                _LOGGER.debug("Skipping entity cleanup: config_entry not available")
+                return
+
+            entity_registry = async_get_entity_registry(self.hass)
+
+            entities = entity_registry.entities.get_entries_for_config_entry_id(
+                self.config_entry.entry_id
+            )
+
+            _LOGGER.debug(
+                "Entity cleanup: Found %d entities for config entry %s",
+                len(entities),
+                self.config_entry.entry_id,
+            )
+
+            expected_ids = self._build_expected_unique_ids(current_data)
+            eid_prefix = f"{self.config_entry.entry_id}_"
+            entities_to_remove = []
+
+            for entity in entities:
+                if not entity.unique_id:
+                    continue
+
+                # Only consider entities belonging to this config entry
+                if not entity.unique_id.startswith(eid_prefix):
+                    continue
+
+                if entity.unique_id not in expected_ids:
+                    _LOGGER.info(
+                        "Entity %s (unique_id: %s) no longer matches current data, "
+                        "marking for removal",
+                        entity.entity_id,
+                        entity.unique_id,
+                    )
+                    entities_to_remove.append(entity.entity_id)
+
+            # Remove the orphaned entities
+            for entity_id in entities_to_remove:
+                _LOGGER.info("Removing orphaned entity: %s", entity_id)
+                entity_registry.async_remove(entity_id)
+
+            if entities_to_remove:
+                _LOGGER.info("Removed %d orphaned entities", len(entities_to_remove))
+            else:
+                _LOGGER.debug("No orphaned entities found")
+
+        except Exception as ex:
+            _LOGGER.error("Failed to cleanup orphaned entities: %s", ex)
+
+    # -------------------------------------------------------------------------
+    # Watch API support
+    # -------------------------------------------------------------------------
+
+    def _build_watch_configs(
+        self, base_url: str
+    ) -> list[tuple[str, str, Callable[..., Any]]]:
+        """Return a list of (resource_type, url, parse_fn) tuples for watch tasks."""
+        configs: list[tuple[str, str, Callable[..., Any]]] = []
+        client = self.client
+        # Fully-off resources are not fetched — don't watch them either.
+        # Sensors-off resources keep their watch (switches consume the data).
+        skipped = self._disabled & FULLY_DISABLEABLE_RESOURCES
+
+        # Cluster-scoped: nodes always use the cluster-wide endpoint
+        configs.append(("nodes", f"{base_url}/api/v1/nodes", client._parse_node_item))
+
+        # Namespace-scoped resources, one watch per (resource, namespace) —
+        # or per resource only, when monitoring the whole cluster.
+        if client.monitor_all_namespaces:
+            for (
+                resource_type,
+                api_group,
+                plural,
+                parse_attr,
+            ) in _NAMESPACED_WATCH_RESOURCES:
+                configs.append(
+                    (
+                        resource_type,
+                        f"{base_url}/{api_group}/{plural}",
+                        getattr(client, parse_attr),
+                    )
+                )
+        else:
+            for ns in client.namespaces:
+                for (
+                    resource_type,
+                    api_group,
+                    plural,
+                    parse_attr,
+                ) in _NAMESPACED_WATCH_RESOURCES:
+                    configs.append(
+                        (
+                            resource_type,
+                            f"{base_url}/{api_group}/namespaces/{ns}/{plural}",
+                            getattr(client, parse_attr),
+                        )
+                    )
+
+        return [c for c in configs if c[0] not in skipped]
+
+    async def async_start_watch_tasks(self) -> None:
+        """Start background watch tasks for all resource types."""
+        self._watch_stop_event.clear()
+        base_url = f"https://{self.client.host}:{self.client.port}"
+        configs = self._build_watch_configs(base_url)
+        for resource_type, url, parse_fn in configs:
+            task = self.hass.async_create_background_task(
+                self._run_watch_loop(resource_type, url, parse_fn),
+                f"k8s_watch_{resource_type}_{url}",
+            )
+            self._watch_tasks.append(task)
+        _LOGGER.debug(
+            "Started %d watch tasks for coordinator %s",
+            len(self._watch_tasks),
+            self.name,
+        )
+
+    async def async_stop_watch_tasks(self) -> None:
+        """Cancel all active watch tasks and wait for them to finish."""
+        if not self._watch_tasks:
+            return
+        self._watch_stop_event.set()
+        for task in self._watch_tasks:
+            task.cancel()
+        await asyncio.gather(*self._watch_tasks, return_exceptions=True)
+        self._watch_tasks.clear()
+        self._watch_stop_event.clear()
+        _LOGGER.debug("Stopped all watch tasks for coordinator %s", self.name)
+
+    def _metrics_issue_id(self) -> str:
+        """Issue id for the per-entry metrics-server-unavailable repair issue."""
+        return f"{ISSUE_METRICS_SERVER_UNAVAILABLE}_{self.config_entry.entry_id}"
+
+    @callback
+    def _sync_metrics_repair_issue(
+        self,
+        nodes: list[dict[str, Any]],
+        node_metrics: dict[str, Any],
+    ) -> None:
+        """Create or dismiss the metrics-server-unavailable issue based on state."""
+        metrics_missing = bool(nodes) and not node_metrics
+        if metrics_missing and not self._metrics_issue_active:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._metrics_issue_id(),
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_METRICS_SERVER_UNAVAILABLE,
+                translation_placeholders={
+                    "cluster": getattr(self.client, "cluster_name", "") or "unknown",
+                },
+                learn_more_url=METRICS_SERVER_LEARN_MORE_URL,
+            )
+            self._metrics_issue_active = True
+        elif not metrics_missing and self._metrics_issue_active:
+            ir.async_delete_issue(self.hass, DOMAIN, self._metrics_issue_id())
+            self._metrics_issue_active = False
+
+    def _watch_issue_id(self) -> str:
+        """Issue id for the per-entry watch-connection-failing repair issue."""
+        return f"{ISSUE_WATCH_CONNECTION_FAILING}_{self.config_entry.entry_id}"
+
+    @callback
+    def _sync_watch_repair_issue(self, loop_key: str, failing: bool) -> None:
+        """Raise/dismiss the watch-connection-failing issue from per-loop health.
+
+        Each watch loop reports its own state under a per-`(resource_type, url)`
+        key; the issue is active while *any* loop is in a sustained-failure state,
+        and clears once all recover.
+        """
+        if failing:
+            self._failing_watch_loops.add(loop_key)
+        else:
+            self._failing_watch_loops.discard(loop_key)
+
+        # While any watch loop is in sustained failure (e.g. the ServiceAccount
+        # lacks the `watch` verb), poll at the regular fast interval instead of
+        # the long watch fallback so data stays fresh; stretch back out once
+        # every stream recovers. Takes effect when the next refresh reschedules.
+        if self._watch_enabled:
+            seconds = (
+                self._poll_interval
+                if self._failing_watch_loops
+                else DEFAULT_FALLBACK_POLL_INTERVAL
+            )
+            self.update_interval = timedelta(seconds=seconds)
+
+        should_be_active = bool(self._failing_watch_loops)
+        if should_be_active and not self._watch_issue_active:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._watch_issue_id(),
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_WATCH_CONNECTION_FAILING,
+                translation_placeholders={
+                    "cluster": getattr(self.client, "cluster_name", "") or "unknown",
+                },
+                learn_more_url=WATCH_LEARN_MORE_URL,
+            )
+            self._watch_issue_active = True
+        elif not should_be_active and self._watch_issue_active:
+            ir.async_delete_issue(self.hass, DOMAIN, self._watch_issue_id())
+            self._watch_issue_active = False
+
+    def _forbidden_issue_id(self) -> str:
+        """Issue id for the per-entry missing-RBAC-permission repair issue."""
+        return f"{ISSUE_WATCH_FORBIDDEN}_{self.config_entry.entry_id}"
+
+    @callback
+    def _handle_watch_forbidden(self, loop_key: str, resource_type: str) -> None:
+        """Record that the ServiceAccount may not list/watch ``resource_type``.
+
+        A 403 does not feed the failure streak: the generic watch issue stays
+        untouched, and a dedicated issue names the resource(s) so the user
+        knows which rule to add. The calling loop keeps retrying at the slow
+        backoff cap, because a 403 is not always permanent — right after an
+        API server restart the RBAC authorizer can deny requests until its
+        caches have synced — and `_clear_watch_forbidden` drops the loop again
+        once a retry succeeds. Re-creating the issue with the same id updates
+        its placeholders in place. If every watch task is forbidden, there is
+        no live data source left at all, so the poll interval is sped back up
+        to the regular fast interval instead of staying at the slow watch
+        fallback.
+        """
+        if resource_type not in self._forbidden_resources:
+            _LOGGER.warning(
+                "Watch %s: HTTP 403 Forbidden — the ServiceAccount may not "
+                "list/watch this resource; live updates for it are off until "
+                "the RBAC rule is added (retrying every %d s)",
+                resource_type,
+                WATCH_MAX_RECONNECT_DELAY,
+            )
+        self._sync_watch_repair_issue(loop_key, failing=False)
+        self._forbidden_loops[loop_key] = resource_type
+        # With every stream forbidden there is no live data source left, so
+        # poll at the regular interval instead of the slow watch fallback.
+        # `self._watch_tasks` must be non-empty here too: an empty list means
+        # no tasks are registered yet (e.g. called directly in a test), not
+        # that "all of them" are forbidden.
+        if (
+            self._watch_enabled
+            and self._watch_tasks
+            and len(self._forbidden_loops) >= len(self._watch_tasks)
+        ):
+            self.update_interval = timedelta(seconds=self._poll_interval)
+        self._raise_forbidden_issue()
+
+    @callback
+    def _clear_watch_forbidden(self, loop_key: str) -> None:
+        """Drop ``loop_key`` from the forbidden set after a successful list.
+
+        Updates the issue's resource list, or deletes the issue once no
+        forbidden loop is left. The caller has just synced the poll interval
+        via `_sync_watch_repair_issue`, which covers the all-forbidden case.
+        """
+        resource_type = self._forbidden_loops.pop(loop_key, None)
+        if resource_type is None:
+            return
+        if resource_type not in self._forbidden_resources:
+            _LOGGER.info(
+                "Watch %s: access granted again, live updates resumed", resource_type
+            )
+        if self._forbidden_loops:
+            self._raise_forbidden_issue()
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, self._forbidden_issue_id())
+
+    @callback
+    def _raise_forbidden_issue(self) -> None:
+        """Create (or update in place) the watch_forbidden repair issue."""
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._forbidden_issue_id(),
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_WATCH_FORBIDDEN,
+            translation_placeholders={
+                "cluster": getattr(self.client, "cluster_name", "") or "unknown",
+                "resources": ", ".join(sorted(self._forbidden_resources)),
+            },
+            learn_more_url=RBAC_LEARN_MORE_URL,
+        )
+
+    @callback
+    def async_clear_repair_issues(self) -> None:
+        """Remove repair issues owned by this coordinator on unload.
+
+        Deletes unconditionally (async_delete_issue is a no-op when absent):
+        the in-memory ``*_issue_active`` flags only track what *this* instance
+        created, so gating on them would leave an issue inherited from an
+        earlier setup that never unloaded cleanly orphaned forever.
+        """
+        ir.async_delete_issue(self.hass, DOMAIN, self._metrics_issue_id())
+        ir.async_delete_issue(self.hass, DOMAIN, self._watch_issue_id())
+        ir.async_delete_issue(self.hass, DOMAIN, self._forbidden_issue_id())
+        self._metrics_issue_active = False
+        self._watch_issue_active = False
+        self._failing_watch_loops.clear()
+        self._forbidden_loops.clear()
+
+    @callback
+    def async_cleanup_stale_repair_issues(self) -> None:
+        """Delete repair issues whose owning feature is disabled.
+
+        Called at entry setup. Each repair issue is normally cleared by the
+        feature that raises it (watch/event loops, the metrics sync). When
+        that feature is turned off, those code paths never run, so an issue
+        left over from a previous setup would otherwise persist forever
+        (issue #349: watch issue survived switching back to polling mode).
+        """
+        events_enabled = self.config_entry.options.get(
+            CONF_ENABLE_EVENTS, DEFAULT_ENABLE_EVENTS
+        )
+        if not self._watch_enabled and not events_enabled:
+            ir.async_delete_issue(self.hass, DOMAIN, self._watch_issue_id())
+            ir.async_delete_issue(self.hass, DOMAIN, self._forbidden_issue_id())
+        if "metrics" in self._disabled:
+            ir.async_delete_issue(self.hass, DOMAIN, self._metrics_issue_id())
+
+    def _populate_from_list(
+        self,
+        resource_type: str,
+        items: list[dict[str, Any]],
+        parse_fn: Any,
+    ) -> None:
+        """Merge parsed items from a list response into coordinator.data[resource_type]."""
+        if self.data is None:
+            return
+        parsed: dict[str, dict[str, Any]] = {}
+        for item in items:
+            try:
+                result = parse_fn(item)
+                if result:
+                    if resource_type == "nodes":
+                        key = result["name"]
+                    else:
+                        # Namespaced resources are keyed "{namespace}_{name}"
+                        key = f"{result['namespace']}_{result['name']}"
+                    parsed[key] = result
+            except Exception as ex:
+                _LOGGER.warning(
+                    "Failed to parse %s item during list: %s", resource_type, ex
+                )
+        # Merge into the existing dict so that tasks watching different namespaces
+        # for the same resource type don't overwrite each other's initial data.
+        self.data.setdefault(resource_type, {}).update(parsed)
+        # Sync derived counts
+        if resource_type == "pods":
+            self.data["pods_count"] = len(self.data["pods"])
+        elif resource_type == "nodes":
+            self.data["nodes_count"] = len(self.data["nodes"])
+
+    def _apply_watch_event(
+        self,
+        resource_type: str,
+        event_type: str,
+        obj: dict[str, Any],
+        parse_fn: Any,
+    ) -> None:
+        """Apply a single watch event (ADDED/MODIFIED/DELETED) to coordinator.data."""
+        if self.data is None:
+            return
+
+        metadata = obj.get("metadata", {})
+        name = metadata.get("name", "")
+        namespace = metadata.get("namespace", "")
+        key = name if resource_type == "nodes" else f"{namespace}_{name}"
+
+        if event_type in ("ADDED", "MODIFIED"):
+            try:
+                parsed = parse_fn(obj)
+            except Exception as ex:
+                _LOGGER.warning(
+                    "Failed to parse %s %s event for %r: %s",
+                    resource_type,
+                    event_type,
+                    key,
+                    ex,
+                )
+                return
+            if not parsed:
+                # Dropped by the parser (e.g. a Job-owned pod while
+                # exclude_job_pods is on): nothing changed, so don't wake
+                # every entity for it.
+                return
+            self.data.setdefault(resource_type, {})[key] = parsed
+        elif event_type == "DELETED":
+            if self.data.get(resource_type, {}).pop(key, None) is None:
+                # Never tracked (filtered or unknown) — no entity to clean up.
+                return
+            self.hass.async_create_task(self._cleanup_orphaned_entities(self.data))
+        else:
+            return
+
+        # Sync derived counts
+        if resource_type == "pods" and "pods" in self.data:
+            self.data["pods_count"] = len(self.data["pods"])
+        elif resource_type == "nodes" and "nodes" in self.data:
+            self.data["nodes_count"] = len(self.data["nodes"])
+
+        self.data["last_update"] = time.time()
+        self.async_update_listeners()
+
+    def _check_stream_not_closed_early(self, started: float, got_event: bool) -> None:
+        """Raise WatchStreamClosedEarly for an empty stream that ended almost at once.
+
+        Shared by both watch loops; the raise lands in their generic exception
+        handler, which owns the backoff and the failure streak.
+        """
+        elapsed = monotonic() - started
+        if got_event or self._watch_stop_event.is_set():
+            return
+        if elapsed < WATCH_EARLY_CLOSE_SECONDS:
+            raise WatchStreamClosedEarly(
+                f"stream closed after {elapsed:.1f} s without delivering any event"
+            )
+
+    async def _run_watch_loop(
+        self,
+        resource_type: str,
+        url: str,
+        parse_fn: Any,
+    ) -> None:
+        """Run the watch loop for a single resource type with reconnect logic."""
+        resource_version = "0"
+        failure_streak = 0
+        # Per-loop key for repair-issue tracking. In per-namespace mode multiple
+        # loops share a resource_type (e.g. "pods" for several namespaces), so the
+        # failing-loop state must be keyed per (resource_type, url) — otherwise one
+        # namespace recovering would clear the repair issue while another is still
+        # failing. resource_type itself stays the data-bucket key.
+        loop_key = f"{resource_type}:{url}"
+
+        while not self._watch_stop_event.is_set():
+            try:
+                if resource_version == "0":
+                    # Full list + extract resourceVersion to anchor the watch
+                    (
+                        items,
+                        resource_version,
+                    ) = await self.client.list_resource_with_version(url)
+                    async with self._data_lock:
+                        self._populate_from_list(resource_type, items, parse_fn)
+                    self.async_update_listeners()
+                    _LOGGER.debug(
+                        "Watch %s: initial list fetched (%d items, rv=%s)",
+                        resource_type,
+                        len(items),
+                        resource_version,
+                    )
+                    failure_streak = 0
+                    self._sync_watch_repair_issue(loop_key, failing=False)
+                    self._clear_watch_forbidden(loop_key)
+
+                started = monotonic()
+                got_event = False
+                async for event in self.client.watch_stream(url, resource_version):
+                    got_event = True
+                    if self._watch_stop_event.is_set():
+                        return
+
+                    event_type = event.get("type", "")
+                    obj = event.get("object", {})
+
+                    # Keep resource_version up to date so we can resume after reconnect
+                    new_rv = obj.get("metadata", {}).get("resourceVersion")
+                    if new_rv:
+                        resource_version = new_rv
+
+                    if event_type == "BOOKMARK":
+                        continue
+
+                    async with self._data_lock:
+                        self._apply_watch_event(
+                            resource_type, event_type, obj, parse_fn
+                        )
+
+                self._check_stream_not_closed_early(started, got_event)
+                # Stream ended cleanly (timeoutSeconds expired); reconnect immediately
+                failure_streak = 0
+                self._sync_watch_repair_issue(loop_key, failing=False)
+                _LOGGER.debug(
+                    "Watch %s: stream ended cleanly, reconnecting", resource_type
+                )
+
+            except ResourceVersionExpired:
+                _LOGGER.info(
+                    "Watch %s: resource version %r expired (410), relisting",
+                    resource_type,
+                    resource_version,
+                )
+                resource_version = "0"
+                failure_streak = 0
+                self._sync_watch_repair_issue(loop_key, failing=False)
+
+            except asyncio.CancelledError:
+                self._failing_watch_loops.discard(loop_key)
+                return
+
+            except Exception as ex:
+                if isinstance(ex, aiohttp.ClientResponseError) and ex.status == 403:
+                    self._handle_watch_forbidden(loop_key, resource_type)
+                    # Relist on retry: the successful list is what clears the
+                    # forbidden state, and data may have drifted meanwhile.
+                    resource_version = "0"
+                    delay = _forbidden_retry_delay()
+                else:
+                    failure_streak += 1
+                    delay = _reconnect_delay(failure_streak)
+                    if failure_streak >= WATCH_MAX_FAILURE_STREAK:
+                        self._sync_watch_repair_issue(loop_key, failing=True)
+                    _LOGGER.warning(
+                        "Watch %s error: %s — reconnect attempt %d in %.1f s",
+                        resource_type,
+                        ex,
+                        failure_streak,
+                        delay,
+                    )
+                try:
+                    await asyncio.wait_for(self._watch_stop_event.wait(), timeout=delay)
+                    # stop_event was set — exit gracefully
+                    self._failing_watch_loops.discard(loop_key)
+                    return
+                except TimeoutError:
+                    pass
+
+    # -------------------------------------------------------------------------
+    # Event watch API support (opt-in, independent of state watch)
+    # -------------------------------------------------------------------------
+
+    async def async_start_event_watch_tasks(self) -> None:
+        """Start the cluster-events watch task(s) (opt-in, independent of state watch)."""
+        self._watch_stop_event.clear()
+        base = f"https://{self.client.host}:{self.client.port}"
+        if self.client.monitor_all_namespaces:
+            urls = [f"{base}/api/v1/events"]
+        else:
+            urls = [
+                f"{base}/api/v1/namespaces/{ns}/events" for ns in self.client.namespaces
+            ]
+        for url in urls:
+            self._watch_tasks.append(
+                self.hass.async_create_background_task(
+                    self._run_event_watch_loop(url), f"k8s_events_{url}"
+                )
+            )
+
+    @callback
+    def _dispatch_event(self, obj: dict[str, Any]) -> None:
+        """Filter + dispatch a single k8s event object to the event entity."""
+        event_types = self.config_entry.options.get(
+            CONF_EVENT_TYPES, DEFAULT_EVENT_TYPES
+        )
+        ev_type = obj.get("type", "Normal")
+        if event_types != EVENT_TYPES_ALL and ev_type != "Warning":
+            return
+        involved = obj.get("involvedObject", {})
+        payload = {
+            "reason": obj.get("reason"),
+            "type": ev_type,
+            "involved_kind": involved.get("kind"),
+            "involved_name": involved.get("name"),
+            "namespace": involved.get("namespace")
+            or obj.get("metadata", {}).get("namespace"),
+            "message": obj.get("message"),
+            "count": obj.get("count"),
+            "event_time": obj.get("lastTimestamp") or obj.get("eventTime"),
+        }
+        async_dispatcher_send(
+            self.hass, event_signal(self.config_entry.entry_id), payload
+        )
+
+    async def _run_event_watch_loop(self, url: str) -> None:
+        """Tail the events API and dispatch events (no state stored)."""
+        resource_version = "0"
+        failure_streak = 0
+        rt = f"events:{url}"
+        while not self._watch_stop_event.is_set():
+            try:
+                if resource_version == "0":
+                    # Anchor rv only; do NOT fire the existing backlog.
+                    (
+                        _,
+                        resource_version,
+                    ) = await self.client.list_resource_with_version(url)
+                    failure_streak = 0
+                    self._sync_watch_repair_issue(rt, failing=False)
+                    self._clear_watch_forbidden(rt)
+                started = monotonic()
+                got_event = False
+                async for event in self.client.watch_stream(url, resource_version):
+                    got_event = True
+                    if self._watch_stop_event.is_set():
+                        return
+                    obj = event.get("object", {})
+                    new_rv = obj.get("metadata", {}).get("resourceVersion")
+                    if new_rv:
+                        resource_version = new_rv
+                    if event.get("type", "") in ("ADDED", "MODIFIED"):
+                        self._dispatch_event(obj)
+                self._check_stream_not_closed_early(started, got_event)
+                failure_streak = 0
+                self._sync_watch_repair_issue(rt, failing=False)
+                _LOGGER.debug("Event watch: stream ended cleanly, reconnecting")
+            except ResourceVersionExpired:
+                _LOGGER.info(
+                    "Event watch: resource version %r expired (410), relisting",
+                    resource_version,
+                )
+                resource_version = "0"
+                failure_streak = 0
+                self._sync_watch_repair_issue(rt, failing=False)
+            except asyncio.CancelledError:
+                self._failing_watch_loops.discard(rt)
+                return
+            except Exception as ex:
+                if isinstance(ex, aiohttp.ClientResponseError) and ex.status == 403:
+                    self._handle_watch_forbidden(rt, "events")
+                    resource_version = "0"
+                    delay = _forbidden_retry_delay()
+                else:
+                    failure_streak += 1
+                    delay = _reconnect_delay(failure_streak)
+                    if failure_streak >= WATCH_MAX_FAILURE_STREAK:
+                        self._sync_watch_repair_issue(rt, failing=True)
+                    _LOGGER.warning(
+                        "Event watch error: %s — reconnect in %.1f s", ex, delay
+                    )
+                try:
+                    await asyncio.wait_for(self._watch_stop_event.wait(), timeout=delay)
+                    self._failing_watch_loops.discard(rt)
+                    return
+                except TimeoutError:
+                    pass

@@ -1,0 +1,16 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+resources:
+  - alloy
+  - arris-exporter
+  - blackbox-exporter/ks.yaml
+  - grafana/ks.yaml
+  - greptime
+  - karma/ks.yaml
+  - kube-prometheus-stack/ks.yaml
+  - paperless-exporter
+  # - promtail/ks.yaml
+  - silence-operator/ks.yaml
+  - smartctl-exporter/ks.yaml

@@ -1,0 +1,13 @@
+---
+spec:
+  template:
+    spec:
+      containers:
+        - name: localai-local-ai
+          volumes:
+            - hostPath:
+                path: /dev/dri
+                type: ""
+          volumeMounts:
+            - mountPath: /dev/dri
+              name: intel-gpu

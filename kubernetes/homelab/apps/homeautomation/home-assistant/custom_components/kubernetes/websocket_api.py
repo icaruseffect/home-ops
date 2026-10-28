@@ -1,0 +1,603 @@
+"""WebSocket API for the Kubernetes integration panel."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+import logging
+from typing import Any
+
+from homeassistant.components import websocket_api
+from homeassistant.core import HomeAssistant, callback
+import voluptuous as vol
+
+from .const import (
+    CONF_CLUSTER_NAME,
+    CONF_DEVICE_GROUPING_MODE,
+    CONF_ENABLE_PANEL,
+    CONF_ENABLE_WATCH,
+    CONF_HOST,
+    CONF_MONITOR_ALL_NAMESPACES,
+    CONF_NAMESPACE,
+    CONF_PORT,
+    CONF_SCALE_COOLDOWN,
+    CONF_SCALE_VERIFICATION_TIMEOUT,
+    CONF_SWITCH_UPDATE_INTERVAL,
+    CONF_VERIFY_SSL,
+    DEFAULT_CLUSTER_NAME,
+    DEFAULT_DEVICE_GROUPING_MODE,
+    DEFAULT_ENABLE_PANEL,
+    DEFAULT_ENABLE_WATCH,
+    DEFAULT_MONITOR_ALL_NAMESPACES,
+    DEFAULT_PORT,
+    DEFAULT_SCALE_COOLDOWN,
+    DEFAULT_SCALE_VERIFICATION_TIMEOUT,
+    DEFAULT_SWITCH_UPDATE_INTERVAL,
+    DEFAULT_VERIFY_SSL,
+)
+from .coordinator import KubernetesDataCoordinator, get_loaded_entries
+
+_LOGGER = logging.getLogger(__name__)
+
+# Resource buckets that are keyed "{namespace}_{name}" in coordinator.data and
+# broken down per-namespace in the cluster overview. Order matches the
+# previous hand-written counts dicts.
+_NAMESPACED_KEYS: tuple[str, ...] = (
+    "pods",
+    "deployments",
+    "statefulsets",
+    "daemonsets",
+    "cronjobs",
+    "jobs",
+    "ingresses",
+    "services",
+)
+# All resource buckets counted in the cluster-wide overview (nodes are
+# cluster-scoped, so they're not part of the namespace breakdown above).
+_COUNT_KEYS: tuple[str, ...] = ("pods", "nodes", *_NAMESPACED_KEYS[1:])
+
+
+def _get_coordinator(
+    hass: HomeAssistant, entry_id: str
+) -> KubernetesDataCoordinator | None:
+    """Return the coordinator of a loaded config entry, or None."""
+    for entry in get_loaded_entries(hass):
+        if entry.entry_id == entry_id:
+            return entry.runtime_data.coordinator
+    return None
+
+
+@callback
+def async_register_websocket_commands(hass: HomeAssistant) -> None:
+    """Register all Kubernetes WebSocket commands."""
+    websocket_api.async_register_command(hass, websocket_cluster_overview)
+    websocket_api.async_register_command(hass, websocket_nodes_list)
+    websocket_api.async_register_command(hass, websocket_pods_list)
+    websocket_api.async_register_command(hass, websocket_workloads_list)
+    websocket_api.async_register_command(hass, websocket_ingresses_list)
+    websocket_api.async_register_command(hass, websocket_services_list)
+    websocket_api.async_register_command(hass, websocket_config_list)
+    websocket_api.async_register_command(hass, websocket_delete_pod)
+    websocket_api.async_register_command(hass, websocket_delete_job)
+    websocket_api.async_register_command(hass, websocket_suspend_cronjob)
+    websocket_api.async_register_command(hass, websocket_subscribe_updates)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/cluster/overview"})
+@websocket_api.async_response
+async def websocket_cluster_overview(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return aggregated cluster overview data from all config entries."""
+    result = _get_cluster_overview_data(hass)
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/nodes/list"})
+@websocket_api.async_response
+async def websocket_nodes_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return all nodes from all config entries."""
+    result = _list_data(hass, "nodes")
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/pods/list"})
+@websocket_api.async_response
+async def websocket_pods_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return all pods from all config entries."""
+    result = _list_data(hass, "pods")
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/workloads/list"})
+@websocket_api.async_response
+async def websocket_workloads_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return all workloads from all config entries."""
+    result = _get_workloads_list_data(hass)
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/ingresses/list"})
+@websocket_api.async_response
+async def websocket_ingresses_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return all ingresses from all config entries."""
+    result = _list_data(hass, "ingresses")
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/services/list"})
+@websocket_api.async_response
+async def websocket_services_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return all services from all config entries."""
+    result = _list_data(hass, "services")
+    connection.send_result(msg["id"], result)
+
+
+def _get_cluster_overview_data(hass: HomeAssistant) -> dict[str, Any]:
+    """Gather cluster overview data from all config entries."""
+    clusters: list[dict[str, Any]] = []
+
+    for entry in get_loaded_entries(hass):
+        entry_id = entry.entry_id
+        entry_data = entry.runtime_data
+        coordinator = entry_data.coordinator
+        config = entry_data.config
+
+        cluster_info = _build_cluster_overview(entry_id, config, coordinator)
+        clusters.append(cluster_info)
+
+    return {"clusters": clusters}
+
+
+def _build_cluster_overview(
+    entry_id: str,
+    config: dict[str, Any],
+    coordinator: KubernetesDataCoordinator,
+) -> dict[str, Any]:
+    """Build overview data for a single cluster."""
+    data = coordinator.data
+
+    if not data:
+        return {
+            "entry_id": entry_id,
+            "cluster_name": config.get(CONF_CLUSTER_NAME, DEFAULT_CLUSTER_NAME),
+            "healthy": None,
+            "server_version": None,
+            "last_update": 0.0,
+            "counts": _empty_counts(),
+            "namespaces": {},
+            "alerts": _empty_alerts(),
+        }
+
+    counts = {key: len(data.get(key, {})) for key in _COUNT_KEYS}
+
+    namespaces = _build_namespace_breakdown(data)
+    alerts = _build_alerts(data)
+
+    return {
+        "entry_id": entry_id,
+        "cluster_name": config.get(CONF_CLUSTER_NAME, DEFAULT_CLUSTER_NAME),
+        "healthy": coordinator.last_update_success,
+        "server_version": data.get("server_version"),
+        "last_update": data.get("last_update", 0.0),
+        "counts": counts,
+        "namespaces": namespaces,
+        "alerts": alerts,
+    }
+
+
+def _build_namespace_breakdown(data: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """Build per-namespace resource counts."""
+    ns_counts: dict[str, dict[str, int]] = {}
+
+    for key in _NAMESPACED_KEYS:
+        for item in data.get(key, {}).values():
+            ns = item.get("namespace", "unknown")
+            ns_counts.setdefault(ns, _empty_ns_counts())
+            ns_counts[ns][key] += 1
+
+    return ns_counts
+
+
+def _build_alerts(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Build alert lists for nodes with pressure, degraded workloads, failed pods."""
+    nodes_with_pressure: list[dict[str, Any]] = []
+    degraded_workloads: list[dict[str, Any]] = []
+    failed_pods: list[dict[str, Any]] = []
+
+    # Check node conditions
+    pressure_keys = [
+        "memory_pressure",
+        "disk_pressure",
+        "pid_pressure",
+        "network_unavailable",
+    ]
+    for node_name, node in data.get("nodes", {}).items():
+        conditions = [k for k in pressure_keys if node.get(k)]
+        if conditions:
+            nodes_with_pressure.append({"name": node_name, "conditions": conditions})
+
+    # Check degraded deployments
+    for deploy in data.get("deployments", {}).values():
+        desired = deploy.get("replicas", 0)
+        available = deploy.get("available_replicas") or 0
+        if desired > 0 and available < desired:
+            degraded_workloads.append(
+                {
+                    "name": deploy.get("name", ""),
+                    "type": "Deployment",
+                    "namespace": deploy.get("namespace", "unknown"),
+                    "ready": available,
+                    "desired": desired,
+                }
+            )
+
+    # Check degraded statefulsets
+    for sts in data.get("statefulsets", {}).values():
+        desired = sts.get("replicas", 0)
+        ready = sts.get("ready_replicas") or 0
+        if desired > 0 and ready < desired:
+            degraded_workloads.append(
+                {
+                    "name": sts.get("name", ""),
+                    "type": "StatefulSet",
+                    "namespace": sts.get("namespace", "unknown"),
+                    "ready": ready,
+                    "desired": desired,
+                }
+            )
+
+    # Check degraded daemonsets
+    for ds in data.get("daemonsets", {}).values():
+        desired = ds.get("desired_number_scheduled", 0)
+        available = ds.get("number_available") or 0
+        if desired > 0 and available < desired:
+            degraded_workloads.append(
+                {
+                    "name": ds.get("name", ""),
+                    "type": "DaemonSet",
+                    "namespace": ds.get("namespace", "unknown"),
+                    "ready": available,
+                    "desired": desired,
+                }
+            )
+
+    # Check failed pods
+    for pod in data.get("pods", {}).values():
+        phase = pod.get("phase", "")
+        if phase in ("Failed", "Unknown"):
+            failed_pods.append(
+                {
+                    "name": pod.get("name", ""),
+                    "namespace": pod.get("namespace", "unknown"),
+                    "phase": phase,
+                }
+            )
+
+    return {
+        "nodes_with_pressure": nodes_with_pressure,
+        "degraded_workloads": degraded_workloads,
+        "failed_pods": failed_pods,
+    }
+
+
+def _empty_counts() -> dict[str, int]:
+    """Return empty resource counts."""
+    return dict.fromkeys(_COUNT_KEYS, 0)
+
+
+def _empty_ns_counts() -> dict[str, int]:
+    """Return empty per-namespace counts."""
+    return dict.fromkeys(_NAMESPACED_KEYS, 0)
+
+
+def _empty_alerts() -> dict[str, list]:
+    """Return empty alerts."""
+    return {
+        "nodes_with_pressure": [],
+        "degraded_workloads": [],
+        "failed_pods": [],
+    }
+
+
+def _list_data(hass: HomeAssistant, key: str) -> dict[str, Any]:
+    """Gather a single resource list (nodes/pods/ingresses/services) from all
+    config entries, keyed the same as the coordinator's data bucket."""
+    clusters: list[dict[str, Any]] = []
+
+    for entry in get_loaded_entries(hass):
+        entry_data = entry.runtime_data
+        data = entry_data.coordinator.data
+
+        clusters.append(
+            {
+                "entry_id": entry.entry_id,
+                "cluster_name": entry_data.config.get(
+                    CONF_CLUSTER_NAME, DEFAULT_CLUSTER_NAME
+                ),
+                key: list(data.get(key, {}).values()) if data else [],
+            }
+        )
+
+    return {"clusters": clusters}
+
+
+def _get_workloads_list_data(hass: HomeAssistant) -> dict[str, Any]:
+    """Gather workload data from all config entries."""
+    clusters: list[dict[str, Any]] = []
+
+    for entry in get_loaded_entries(hass):
+        entry_id = entry.entry_id
+        entry_data = entry.runtime_data
+        coordinator = entry_data.coordinator
+        config = entry_data.config
+
+        data = coordinator.data
+
+        if data:
+            deployments = list(data.get("deployments", {}).values())
+            statefulsets = list(data.get("statefulsets", {}).values())
+            daemonsets = list(data.get("daemonsets", {}).values())
+            cronjobs = list(data.get("cronjobs", {}).values())
+            jobs = list(data.get("jobs", {}).values())
+        else:
+            deployments = []
+            statefulsets = []
+            daemonsets = []
+            cronjobs = []
+            jobs = []
+
+        clusters.append(
+            {
+                "entry_id": entry_id,
+                "cluster_name": config.get(CONF_CLUSTER_NAME, DEFAULT_CLUSTER_NAME),
+                "deployments": deployments,
+                "statefulsets": statefulsets,
+                "daemonsets": daemonsets,
+                "cronjobs": cronjobs,
+                "jobs": jobs,
+            }
+        )
+
+    return {"clusters": clusters}
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "kubernetes/pods/delete",
+        vol.Required("entry_id"): str,
+        vol.Required("pod_name"): str,
+        vol.Required("namespace"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_delete_pod(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete a pod."""
+    entry_id = msg["entry_id"]
+    pod_name = msg["pod_name"]
+    namespace = msg["namespace"]
+
+    coordinator = _get_coordinator(hass, entry_id)
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "Config entry not found")
+        return
+
+    client = coordinator.client
+    success = await client.delete_pod(pod_name, namespace)
+
+    if success:
+        # Trigger a data refresh so the UI updates
+        await coordinator.async_request_refresh()
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(
+            msg["id"],
+            "delete_failed",
+            f"Failed to delete pod {pod_name} in namespace {namespace}",
+        )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "kubernetes/jobs/delete",
+        vol.Required("entry_id"): str,
+        vol.Required("job_name"): str,
+        vol.Required("namespace"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_delete_job(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete a job."""
+    entry_id = msg["entry_id"]
+    job_name = msg["job_name"]
+    namespace = msg["namespace"]
+
+    coordinator = _get_coordinator(hass, entry_id)
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "Config entry not found")
+        return
+
+    client = coordinator.client
+    success = await client.delete_job(job_name, namespace)
+
+    if success:
+        # Trigger a data refresh so the UI updates
+        await coordinator.async_request_refresh()
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(
+            msg["id"],
+            "delete_failed",
+            f"Failed to delete job {job_name} in namespace {namespace}",
+        )
+
+
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/config/list"})
+@websocket_api.async_response
+async def websocket_config_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return sanitized config entry data (no secrets)."""
+    result = _get_config_list_data(hass)
+    connection.send_result(msg["id"], result)
+
+
+def _get_config_list_data(hass: HomeAssistant) -> dict[str, Any]:
+    """Gather config entry data from all entries, excluding secrets."""
+    entries: list[dict[str, Any]] = []
+
+    for entry in get_loaded_entries(hass):
+        entry_id = entry.entry_id
+        entry_data = entry.runtime_data
+        coordinator = entry_data.coordinator
+        config = entry_data.config
+
+        panel_enabled = entry.options.get(CONF_ENABLE_PANEL, DEFAULT_ENABLE_PANEL)
+        watch_enabled = entry.options.get(CONF_ENABLE_WATCH, DEFAULT_ENABLE_WATCH)
+
+        namespaces = config.get(CONF_NAMESPACE, [])
+        if isinstance(namespaces, str):
+            namespaces = [namespaces]
+
+        entries.append(
+            {
+                "entry_id": entry_id,
+                "cluster_name": config.get(CONF_CLUSTER_NAME, DEFAULT_CLUSTER_NAME),
+                "host": config.get(CONF_HOST, ""),
+                "port": config.get(CONF_PORT, DEFAULT_PORT),
+                "verify_ssl": config.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+                "monitor_all_namespaces": config.get(
+                    CONF_MONITOR_ALL_NAMESPACES, DEFAULT_MONITOR_ALL_NAMESPACES
+                ),
+                "namespaces": namespaces,
+                "device_grouping_mode": config.get(
+                    CONF_DEVICE_GROUPING_MODE, DEFAULT_DEVICE_GROUPING_MODE
+                ),
+                "switch_update_interval": config.get(
+                    CONF_SWITCH_UPDATE_INTERVAL, DEFAULT_SWITCH_UPDATE_INTERVAL
+                ),
+                "scale_verification_timeout": config.get(
+                    CONF_SCALE_VERIFICATION_TIMEOUT,
+                    DEFAULT_SCALE_VERIFICATION_TIMEOUT,
+                ),
+                "scale_cooldown": config.get(
+                    CONF_SCALE_COOLDOWN, DEFAULT_SCALE_COOLDOWN
+                ),
+                "panel_enabled": panel_enabled,
+                "watch_enabled": watch_enabled,
+                "healthy": coordinator.last_update_success,
+            }
+        )
+
+    return {"entries": entries}
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "kubernetes/cronjobs/suspend",
+        vol.Required("entry_id"): str,
+        vol.Required("cronjob_name"): str,
+        vol.Required("namespace"): str,
+        vol.Required("suspend"): bool,
+    }
+)
+@websocket_api.async_response
+async def websocket_suspend_cronjob(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Suspend (``suspend: true``) or resume (``suspend: false``) a CronJob.
+
+    The panel goes through WebSocket here because the dedicated
+    ``suspend_cronjob``/``resume_cronjob`` services were retired in favor of
+    the CronJob switch, and the panel works with workload names, not entity ids.
+    """
+    entry_id = msg["entry_id"]
+    cronjob_name = msg["cronjob_name"]
+    namespace = msg["namespace"]
+    suspend = msg["suspend"]
+
+    coordinator = _get_coordinator(hass, entry_id)
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "Config entry not found")
+        return
+
+    client = coordinator.client
+    action = client.suspend_cronjob if suspend else client.resume_cronjob
+    result = await action(cronjob_name, namespace)
+
+    if result.get("success"):
+        await coordinator.async_request_refresh()
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        verb = "suspend" if suspend else "resume"
+        connection.send_error(
+            msg["id"],
+            f"{verb}_failed",
+            result.get("error")
+            or f"Failed to {verb} CronJob {cronjob_name} in namespace {namespace}",
+        )
+
+
+@callback
+@websocket_api.websocket_command({vol.Required("type"): "kubernetes/subscribe_updates"})
+def websocket_subscribe_updates(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Push a lightweight event whenever any cluster coordinator updates."""
+
+    @callback
+    def _push_update() -> None:
+        connection.send_message(
+            websocket_api.event_message(msg["id"], {"event": "updated"})
+        )
+
+    unsubs: list[Callable[[], None]] = [
+        entry.runtime_data.coordinator.async_add_listener(_push_update)
+        for entry in get_loaded_entries(hass)
+    ]
+
+    @callback
+    def _unsubscribe() -> None:
+        for unsub in unsubs:
+            unsub()
+
+    connection.subscriptions[msg["id"]] = _unsubscribe
+    connection.send_result(msg["id"])

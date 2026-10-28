@@ -1,0 +1,20 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+
+metadata:
+  labels:
+    app.kubernetes.io/name: paperless-exporter
+    app.kubernetes.io/part-of: paperless
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+  - secret.yaml
+  - servicemonitor.yaml
+
+images:
+  - name: ghcr.io/hansmi/prometheus-paperless-exporter
+    newTag: latest

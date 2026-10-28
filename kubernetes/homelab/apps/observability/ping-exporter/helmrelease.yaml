@@ -1,0 +1,26 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ping-exporter
+  namespace: observability
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: ping-exporter
+      version: 1.x
+      sourceRef:
+        kind: HelmRepository
+        name: ping-exporter-chart
+        namespace: flux-system
+  values:
+    dns:
+      refresh: 2m15s
+      nameserver: 192.168.8.1
+    serviceMonitor:
+      enabled: true
+
+    # Create basic Prometheus alerting rules
+    prometheusRules:
+      enabled: true

@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+data:
+  configuration.yaml: |2+
+    # Loads default set of integrations. Do not remove.
+    default_config:
+
+    assist_pipeline:
+
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 127.0.0.1
+        - ::1
+        - 10.0.0.0/8
+        - fdb6:e5da:a7b8:d3a2::/64
+        - 192.168.8.8
+
+    device_tracker:
+      - platform: luci
+        host: 192.168.8.1
+        ssl: true
+        verify_ssl: false
+        username: !secret openwrt_user
+        password: !secret openwrt_pass
+    #  - platform: ubus
+    #    host: 192.168.8.1
+    #    username: !secret openwrt_user
+    #    password: !secret openwrt_pass
+
+    waste_collection_schedule:
+      sources:
+        - name: awbkoeln_de
+          args:
+            street_code: 782
+            building_number: 29
+
+          customize:
+            - type: grey
+              alias: "Rest"
+            - type: blue
+              alias: "Papierl"
+            - type: yellow
+              alias: "Plastik"
+
+    # Load frontend themes from the themes folder
+    frontend:
+      themes: !include_dir_merge_named themes
+
+    prometheus:
+
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml
+
+    homekit:
+      - name: HASS Bridge
+        advertise_ip: '192.168.8.8'
+        port: 21065
+
+    # climate: !include climate.yaml
+
+    logger:
+      default: error
+    #  logs:
+    #    custom_components.gree: debug
+    #    custom_components.gree.climate: debug
+
+
+    openid:
+      client_id: !secret openid_client_id
+      client_secret: !secret openid_client_secret
+      configure_url: !secret openid_configure_url
+      username_field: "preferred_username"  # Adjust based on your IdP's user info response
+      scope: "openid profile email"
+      block_login: false
+
+    #recorder:
+    #  db_url: !env_var HASS_RECORDER_DB_URL
+
+
+kind: ConfigMap
+metadata:
+  name: home-assistant-configuration
+  namespace: homeautomation

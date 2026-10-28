@@ -1,0 +1,59 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zigbee2mqtt-healthcheck
+data:
+  healthcheck.sh: |
+    #!/bin/bash
+    set -e
+
+    NAMESPACE=${NAMESPACE:-homeautomation}
+    RESOURCE_NAME=${RESOURCE_NAME:-zigbee2mqtt}
+    RESOURCE_TYPE=${RESOURCE_TYPE:-statefulset}
+
+    echo "$(date): Running MQTT health check for ${RESOURCE_TYPE}/${RESOURCE_NAME} in namespace ${NAMESPACE}"
+
+    # Function to restart the resource
+    restart_resource() {
+        echo "$(date): MQTT connection issues detected, restarting ${RESOURCE_TYPE}..."
+        kubectl rollout restart ${RESOURCE_TYPE}/${RESOURCE_NAME} -n ${NAMESPACE}
+        echo "$(date): Restart command issued, waiting for rollout..."
+        kubectl rollout status ${RESOURCE_TYPE}/${RESOURCE_NAME} -n ${NAMESPACE} --timeout=300s
+        echo "$(date): ${RESOURCE_TYPE} restarted successfully"
+    }
+
+    # Check for MQTT connection errors in recent logs
+    echo "$(date): Checking logs for MQTT connection errors..."
+
+    # Get recent logs (last 3 minutes) - try both deployment and statefulset selectors
+    LOGS=$(kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=zigbee2mqtt --since=180s --container=zigbee2mqtt 2>/dev/null || echo "")
+
+    if [ -z "$LOGS" ]; then
+        echo "$(date): Warning: Could not retrieve logs, assuming healthy"
+        exit 0
+    fi
+
+    # Check for MQTT connection errors
+    MQTT_ERRORS=$(echo "$LOGS" | grep -c "Not connected to MQTT server\|MQTT error: connect\|Cannot send message.*MQTT" || true)
+
+    if [ "$MQTT_ERRORS" -gt 0 ]; then
+        echo "$(date): Found $MQTT_ERRORS MQTT error(s) in recent logs"
+
+        # Check if errors are recent and persistent (within last 2 minutes)
+        RECENT_ERRORS=$(echo "$LOGS" | grep "Not connected to MQTT server\|MQTT error: connect" | tail -5)
+
+        if [ -n "$RECENT_ERRORS" ]; then
+            echo "$(date): Recent MQTT errors detected:"
+            echo "$RECENT_ERRORS"
+            restart_resource
+            exit 1
+        else
+            echo "$(date): MQTT errors found but appear to be older, monitoring..."
+        fi
+    else
+        echo "$(date): No MQTT connection errors found in recent logs"
+    fi
+
+    echo "$(date): Health check completed successfully"
+    exit 0

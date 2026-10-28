@@ -1,3 +1,4 @@
+---
 expose:
   # Set how to expose the service. Set the type as "ingress", "clusterIP", "nodePort", "loadBalancer" or "route"
   # and fill the information in the corresponding section
@@ -827,7 +828,7 @@ trivy:
   resources:
     requests:
       cpu: 200m
-      memory: 512Mi
+      memory: 128Mi
     limits:
       cpu: 1
       memory: 1Gi
@@ -917,7 +918,7 @@ trivy:
 database:
   # if external database is used, set "type" to "external"
   # and fill the connection information in "external" section
-  type: internal
+  type: external
   internal:
     image:
       repository: docker.io/goharbor/harbor-db
@@ -967,13 +968,13 @@ database:
       #    memory: 128Mi
       #    cpu: 100m
   external:
-    host: "192.168.0.1"
+    host: "paperless-postgres-db-rw.paperless.svc.cluster.local"
     port: "5432"
-    username: "user"
+    username: "harbor"
     password: "password"
-    coreDatabase: "registry"
+    coreDatabase: "harbor"
     # if using existing secret, the key must be "password"
-    existingSecret: ""
+    existingSecret: "harbor-db"
     # "disable" - No SSL
     # "require" - Always SSL (skip verification)
     # "verify-ca" - Always SSL (verify that the certificate presented by the
@@ -981,7 +982,7 @@ database:
     # "verify-full" - Always SSL (verify that the certification presented by the
     # server was signed by a trusted CA and the server host name matches the one
     # in the certificate)
-    sslmode: "disable"
+    sslmode: "require"
   # The maximum number of connections in the idle connection pool per pod (core+exporter).
   # If it <=0, no idle connections are retained.
   maxIdleConns: 100
@@ -997,11 +998,18 @@ database:
 redis:
   # if external Redis is used, set "type" to "external"
   # and fill the connection information in "external" section
-  type: internal
+  # CHANGED: moved off the bundled goharbor/redis-photon StatefulSet onto
+  # the shared Dragonfly instance in ns dragonfly (also serving
+  # Paperless-ngx). DB indices unchanged (0/1/2/5) - Dragonfly is a drop-in
+  # multi-db Redis-protocol store.
+  type: external
   internal:
     image:
       repository: docker.io/goharbor/redis-photon
-      # tag: dev
+      # goharbor/redis-photon:v2.15.2 was never published to Docker Hub (chart
+      # appVersion outran the actual image push) -- pin to the latest tag that
+      # does exist until upstream catches up.
+      tag: v2.15.1
     # set the service account to be used, default if left empty
     serviceAccountName: ""
     # mount the service account token
@@ -1037,7 +1045,7 @@ redis:
     # support redis, redis+sentinel
     # addr for redis: <host_redis>:<port_redis>
     # addr for redis+sentinel: <host_sentinel1>:<port_sentinel1>,<host_sentinel2>:<port_sentinel2>,<host_sentinel3>:<port_sentinel3>
-    addr: "192.168.0.2:6379"
+    addr: "dragonfly.dragonfly:6379"
     # The name of the set of Redis instances to monitor, it must be set to support redis+sentinel
     sentinelMasterSet: ""
     # TLS configuration for redis connection

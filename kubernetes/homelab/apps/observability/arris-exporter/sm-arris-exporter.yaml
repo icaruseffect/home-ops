@@ -1,0 +1,32 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  annotations:
+  labels:
+    app.kubernetes.io/instance: arris-exporter
+    app.kubernetes.io/name: arris-exporter
+    release: prometheus-stack
+  name: arris-exporter
+  namespace: observability
+spec:
+  endpoints:
+    - interval: 30s
+      path: /metrics
+      port: http
+      relabelings:
+        - action: replace
+          sourceLabels:
+            - __meta_kubernetes_service_name
+          targetLabel: service
+        - action: replace
+          sourceLabels:
+            - __meta_kubernetes_namespace
+          targetLabel: namespace
+      scheme: http
+  namespaceSelector:
+    matchNames:
+      - observability
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: arris-exporter

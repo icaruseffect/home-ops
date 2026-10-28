@@ -1,0 +1,73 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/source.toolkit.fluxcd.io/helmrepository_v1beta2.json
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: gabe565-charts
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://charts.gabe565.com
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: esphome
+  namespace: homeautomation
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: esphome
+      reconcileStrategy: ChartVersion
+      sourceRef:
+        kind: HelmRepository
+        name: gabe565-charts
+        namespace: flux-system
+      version: "*"
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  values:
+    fullnameOverride: esphome
+
+    persistence:
+      config:
+        enabled: true
+        storageClass: openebs-hostpath
+        size: 20Gi
+        retain: true
+
+    env:
+      ESPHOME_DASHBOARD_USE_PING: "true"
+
+    ingress:
+      main:
+        enabled: true
+        ingressClassName: cilium
+        hosts:
+          - host: esphome.lab.lan
+            paths:
+              - path: /
+                pathType: Prefix
+        tls:
+          - secretName: esphome-tls
+            hosts:
+              - esphome.lab.lan
+        annotations:
+          k8s-gateway.dns/hostname: esphome.lab.lan
+          cert-manager.io/cluster-issuer: ca-issuer
+          cert-manager.io/private-key-algorithm: ECDSA
+          cert-manager.io/private-key-size: "256"
+          reloader.stakater.com/auto: "true"
+
+    service:
+      main:
+        ports:
+          http:
+            port: 6052
