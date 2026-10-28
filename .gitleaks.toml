@@ -1,0 +1,7 @@
+[git]
+# Exclude SOPS encrypted files
+[[rules]]
+id = "sops-exclusion"
+description = "Exclude SOPS encrypted files"
+regex = "\\.sops\\.yaml$"
+do_not_scan = true

@@ -13,5 +13,5 @@ creation_rules:
 stores:
   yaml:
     indent: 2
-unencrypted-suffix: .yaml
-encrypted-suffix: .sops.yaml
+# unencrypted-suffix: .yaml
+# encrypted-suffix: .sops.yaml

@@ -64,5 +64,44 @@ talosconfig
 .env*
 .envrc
 
+# ignore kustomize secretGenerator env files
+.secrets*
+
 # ignore node files
 node_modules/*
+
+# ignore secrets without sops extension
+*secret*.yaml
+!*secret*.sops.yaml
+
+# agent-local artifacts (user decision 2026-10-28: never committed)
+.omp/
+.opencode/
+CLAUDE.md
+WATCHDOG.yml
+.trash/
+
+# talos-flux/contabo plaintext secrets: never committed, cleaned by task talos:secrets:clean
+infra/talos/contabo/*.key
+infra/talos/contabo/*.csr
+infra/talos/contabo/admin.crt
+infra/talos/contabo/ca.crt
+infra/talos/contabo/kubeconfig
+infra/talos/contabo/talosconfig*
+infra/talos/contabo/machineconfig_tmp
+
+# agent-local artifacts (user decision 2026-10-28: never committed)
+.omp/
+.opencode/
+CLAUDE.md
+WATCHDOG.yml
+.trash/
+
+# talos-flux/contabo plaintext secrets: never committed, cleaned by task talos:secrets:clean
+infra/talos/contabo/*.key
+infra/talos/contabo/*.csr
+infra/talos/contabo/admin.crt
+infra/talos/contabo/ca.crt
+infra/talos/contabo/kubeconfig
+infra/talos/contabo/talosconfig*
+infra/talos/contabo/machineconfig_tmp
