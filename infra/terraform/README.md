@@ -34,7 +34,7 @@ terraform apply
 
 optional: (dev-prerequisites)
 
-- [pre-commit](https://pre-commit.com/)
+- [prek](https://github.com/j178/prek)
 - [yamllint](https://github.com/adrienverge/yamllint)
 - [terraform-docs](https://github.com/terraform-docs/terraform-docs)
 - [tflint](https://github.com/terraform-linters/tflint)

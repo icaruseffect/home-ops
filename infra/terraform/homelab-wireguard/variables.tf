@@ -7,7 +7,7 @@ variable "host" {
 variable "talos_public_key" {
   description = "WireGuard public key of the talos-flux node (public, not a secret)"
   type        = string
-  default     = "11ok+UJUqOk2Sq6cknM6z7EW1VHdbhqw5Id6qEDhlAo="
+  default     = "4emdvS6Nqb3nhfhXjYNTj+pcDoXykvVNSl/8bFP+Yio="
 }
 
 variable "talos_endpoint" {

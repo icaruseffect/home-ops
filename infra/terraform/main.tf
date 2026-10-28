@@ -19,3 +19,9 @@ terraform {
 module "cloudflare" {
   source = "./cloudflare"
 }
+
+module "linux_k8s_host_homelab" {
+  source = "./linux-k8s-host"
+
+  ssh_host = "homelab.lan"
+}
