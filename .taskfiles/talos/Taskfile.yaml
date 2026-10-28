@@ -263,7 +263,7 @@ tasks:
   # ============================================================================
 
   renew:talosconfig:
-    desc: Renew talos client certificate using CA from machineconfig
+    desc: Renew talos client certificate via live CSR signing (endpoint from machineconfig)
     dir: infra/talos/contabo
     prompt: This will regenerate your talosconfig with a new client certificate. Continue?
     cmds:
@@ -275,41 +275,27 @@ tasks:
         echo "Backup created: talosconfig.backup.${TIMESTAMP}"
       - |
         set -e
-        echo "Extracting CA certificates from machineconfig..."
-        # Create secure temp directory
-        TMPDIR=$(mktemp -d)
-        chmod 700 "$TMPDIR"
-        # Ensure cleanup on exit (even on failure)
-        trap 'rm -rf "$TMPDIR"' EXIT
-
-        # Extract CA credentials with secure permissions
-        yq '.machine.ca.key' machineconfig_patched.yaml | base64 -d > "$TMPDIR/ca.key"
-        yq '.machine.ca.crt' machineconfig_patched.yaml | base64 -d > "$TMPDIR/ca.crt"
-        chmod 600 "$TMPDIR/ca.key"
-        echo "CA certificates extracted successfully"
-
-        echo "Generating new talosconfig with fresh client certificate..."
-        ENDPOINT=$(yq '.cluster.controlPlane.endpoint' machineconfig_patched.yaml | sed -e 's|https://||' -e 's|:[0-9]*$||')
-        talosctl config new \
-          --ca-crt "$TMPDIR/ca.crt" \
-          --ca-key "$TMPDIR/ca.key" \
+        ENDPOINT=$(yq '.cluster.controlPlane.endpoint' machineconfig_patched.yaml | tr -d '"' | sed -e 's|https://||' -e 's|:[0-9]*$||')
+        echo "Regenerating talosconfig via live CSR signing (endpoint: $ENDPOINT)..."
+        # talosctl removed offline CA-based config generation; the API signs the new client cert
+        talosctl --talosconfig talosconfig config new \
           --roles os:admin \
-          --context "$ENDPOINT" \
           --endpoints "$ENDPOINT" \
-          talosconfig
+          --nodes "$ENDPOINT" \
+          talosconfig.new
+        talosctl --talosconfig talosconfig.new config endpoint "$ENDPOINT"
+        mv talosconfig.new talosconfig
         echo "New talosconfig generated successfully"
       - |
         set -e
-        echo "Verifying talosctl connection..."
-        ENDPOINT=$(yq '.cluster.controlPlane.endpoint' machineconfig_patched.yaml | sed -e 's|https://||' -e 's|:[0-9]*$||')
-        talosctl version --nodes "$ENDPOINT"
+        ENDPOINT=$(yq '.cluster.controlPlane.endpoint' machineconfig_patched.yaml | tr -d '"' | sed -e 's|https://||' -e 's|:[0-9]*$||')
+        echo "Verifying talosctl connection with the regenerated config..."
+        talosctl --talosconfig talosconfig --endpoints "$ENDPOINT" version --nodes "$ENDPOINT"
         echo "Talos certificate renewed and verified successfully"
       - task: secrets:clean
     preconditions:
       - test -f talosconfig
       - test -f machineconfig_patched.yaml
-      - sh: "yq '.machine.ca.key' machineconfig_patched.yaml | base64 -d >/dev/null 2>&1"
-        msg: "machineconfig_patched.yaml contains invalid CA key"
       - sh: "which talosctl >/dev/null 2>&1"
         msg: "talosctl not found in PATH"
       - sh: "which yq >/dev/null 2>&1"
