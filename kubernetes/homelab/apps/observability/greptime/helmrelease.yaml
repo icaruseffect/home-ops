@@ -38,6 +38,10 @@ spec:
               kind: Service
               name: greptimedb-standalone
             patch: |
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: greptimedb-standalone
               spec:
                 ports:
                 - name: http
