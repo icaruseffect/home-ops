@@ -11,5 +11,4 @@ resources:
   - secret-immich-postgres-app.sops.yaml
   - helm-release.yaml
   - secret-ml-tunnel.sops.yaml
-  - ml-tunnel.yaml
   - httproute.yaml

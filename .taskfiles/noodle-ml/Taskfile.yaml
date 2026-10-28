@@ -14,27 +14,42 @@ vars:
   ML_IMAGE: ghcr.io/open-noodle/gallery-ml:v5.7.1-rocm
   ML_CACHE_VOLUME: noodle-ml-cache
   TUNNEL_NAME: noodle-ml-tunnel-client
+  TUNNEL_DEPLOY: noodle-ml-tunnel
   TUNNEL_IMAGE: docker.io/jpillora/chisel:1.12.1
-  TUNNEL_SECRET: "{{.ROOT_DIR}}/kubernetes/talos-flux/apps/photos/secret-ml-tunnel.sops.yaml"
+  TUNNEL_SECRET: "{{.TASKFILE_DIR}}/../../kubernetes/talos-flux/apps/photos/secret-ml-tunnel.sops.yaml"
   FORWARD_PORT: "18080"
   STATE_DIR: "{{if .XDG_RUNTIME_DIR}}{{.XDG_RUNTIME_DIR}}{{else}}/tmp{{end}}/noodle-ml"
   FORWARD_PID: "{{.STATE_DIR}}/port-forward.pid"
 
 tasks:
   up:
-    desc: Start the ML container, the port-forward and the reverse tunnel
+    desc: Create the cluster-side tunnel Deployment, then start the ML container, the port-forward and the reverse tunnel
     cmds:
+      - task: cluster:start
       - task: ml:start
       - task: forward:start
       - task: tunnel:start
       - task: status
 
-  down:
-    desc: Stop the tunnel, the port-forward and the ML container (model cache is kept)
+  cluster:start:
+    desc: Apply the tunnel Secret (from sops) and the tunnel Deployment and Service, then wait for the rollout
     cmds:
+      - sops -d {{.TUNNEL_SECRET}} | kubectl --context {{.KCTX}} apply -n {{.NS}} -f -
+      - kubectl --context {{.KCTX}} apply -f {{.TASKFILE_DIR}}/../../kubernetes/talos-flux/apps/photos/ml-tunnel.yaml
+      - kubectl --context {{.KCTX}} -n {{.NS}} rollout status deploy/{{.TUNNEL_DEPLOY}} --timeout=120s
+
+  down:
+    desc: Stop the cluster tunnel pod, the tunnel, the port-forward and the ML container (model cache is kept)
+    cmds:
+      - task: cluster:stop
       - task: tunnel:stop
       - task: forward:stop
       - task: ml:stop
+
+  cluster:stop:
+    desc: Delete the cluster-side tunnel Deployment (Service and Secret are kept)
+    cmds:
+      - kubectl --context {{.KCTX}} -n {{.NS}} delete deployment noodle-ml-tunnel --ignore-not-found
 
   purge:
     desc: down, and also delete the model cache volume
@@ -77,7 +92,7 @@ tasks:
     status:
       - test "$(podman inspect -f '{{"{{.State.Running}}"}}' {{.ML_NAME}} 2>/dev/null)" = "true"
     cmds:
-      - podman volume create {{.ML_CACHE_VOLUME}}
+      - podman volume exists {{.ML_CACHE_VOLUME}} || podman volume create {{.ML_CACHE_VOLUME}}
       - podman rm -f {{.ML_NAME}}
       # HSA_OVERRIDE_GFX_VERSION: gfx1150 (Radeon 890M) is not in the image's supported list.
       # WORKER_TIMEOUT: compiling a model for the GPU takes longer than the 120s default.
