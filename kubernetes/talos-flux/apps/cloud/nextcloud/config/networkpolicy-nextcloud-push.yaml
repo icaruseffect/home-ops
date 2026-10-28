@@ -103,7 +103,7 @@ spec:
               protocol: TCP
     # Allow HTTPS for external connections
     - toFQDNs:
-        - matchName: "cloud.$(SECRET_DOMAIN)"
+        - matchName: "cloud.${SECRET_DOMAIN}"
     - toEntities:
         - world
       toPorts:

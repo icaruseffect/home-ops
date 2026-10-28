@@ -19,9 +19,9 @@ spec:
         - matchPattern: release-assets.githubusercontent.com
         - matchPattern: "*.posteo.de"
         - matchPattern: "*.your-storagebox.de"
-        - matchPattern: "*.$(SECRET_DOMAIN)"
-        - matchPattern: auth.$(SECRET_DOMAIN)
-        - matchPattern: ntfy.$(SECRET_DOMAIN)
+        - matchPattern: "*.${SECRET_DOMAIN}"
+        - matchPattern: auth.${SECRET_DOMAIN}
+        - matchPattern: ntfy.${SECRET_DOMAIN}
     - toEndpoints:
         - matchLabels:
             k8s:app.kubernetes.io/instance: ntfy

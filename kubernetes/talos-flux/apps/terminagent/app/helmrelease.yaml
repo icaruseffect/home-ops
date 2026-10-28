@@ -39,17 +39,17 @@ spec:
               BURST_INTERVAL: "60"
               BURST_START: "06:00"
               DB_PATH: /data/terminagent.db
-              IMAP_HOST: mail.$(SECRET_DOMAIN)
+              IMAP_HOST: mail.${SECRET_DOMAIN}
               IMAP_PORT: "993"
-              IMAP_USER: termine@$(SECRET_DOMAIN)
+              IMAP_USER: termine@${SECRET_DOMAIN}
               MAIL_POLL_INTERVAL: "60"
               MIN_LEAD_MINUTES: "45"
-              NO_PROXY: ntfy.$(SECRET_DOMAIN),ntfy.ntfy.svc.cluster.local,*.svc.cluster.local,auth.$(SECRET_DOMAIN)
+              NO_PROXY: ntfy.${SECRET_DOMAIN},ntfy.ntfy.svc.cluster.local,*.svc.cluster.local,auth.${SECRET_DOMAIN}
               NTFY_TOPIC: KoelnTermin
               NTFY_URL: http://ntfy.ntfy.svc.cluster.local
-              OIDC_ISSUER: https://auth.$(SECRET_DOMAIN)
+              OIDC_ISSUER: https://auth.${SECRET_DOMAIN}
               POLL_INTERVAL: "300"
-              PUBLIC_URL: https://termine.$(SECRET_DOMAIN)
+              PUBLIC_URL: https://termine.${SECRET_DOMAIN}
               TZ: Europe/Berlin
             envFrom:
               - secretRef:
@@ -119,11 +119,11 @@ spec:
         enabled: true
         kind: HTTPRoute
         hostnames:
-          - termine.$(SECRET_DOMAIN)
+          - termine.${SECRET_DOMAIN}
         parentRefs:
           - name: cilium-gateway
             namespace: kube-system
-            sectionName: https-termine.$(SECRET_DOMAIN)
+            sectionName: https-termine.${SECRET_DOMAIN}
           - name: cilium-gateway
             namespace: kube-system
             sectionName: http

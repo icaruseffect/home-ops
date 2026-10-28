@@ -10,14 +10,14 @@ data:
     <html lang="en">
     <head>
       <meta charset="utf-8" />
-      <title>$(SECRET_DOMAIN)</title>
+      <title>${SECRET_DOMAIN}</title>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
     </head>
     <body>
       <p>
         For questions about mail systems operated under this domain, or to
         report abuse or delivery problems, please contact:
-        <a href="mailto:postmaster@$(SECRET_DOMAIN)">postmaster@$(SECRET_DOMAIN)</a>
+        <a href="mailto:postmaster@${SECRET_DOMAIN}">postmaster@${SECRET_DOMAIN}</a>
       </p>
     </body>
     </html>
