@@ -1,0 +1,51 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumEnvoyConfig
+metadata:
+  name: wallabag-rewrite
+  namespace: wallabag
+spec:
+  backendServices:
+  - name: wallabag
+    namespace: wallabag
+  resources:
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: wallabag-listener
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: wallabag
+                route_config:
+                  name: wallabag_routes
+                  virtual_hosts:
+                    - name: wallabag
+                      domains: ["bag.klingel.cloud"]
+                      routes:
+                        # Handle static assets in bundles directory
+                        - match:
+                            prefix: "/bundles/"
+                          route:
+                            cluster: wallabag
+                        # Handle common PHP files directly (no rewrite)
+                        - match:
+                            regex: ".*\\.php$"
+                          route:
+                            cluster: wallabag
+                        # Front controller for the root path
+                        - match:
+                            path: "/"
+                          route:
+                            path_rewrite: "/app.php"
+                            cluster: wallabag
+                        # Default route - rewrite everything else to app.php
+                        - match:
+                            prefix: "/"
+                          route:
+                            prefix_rewrite: "/app.php/"
+                            cluster: wallabag
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

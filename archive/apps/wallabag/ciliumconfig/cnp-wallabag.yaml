@@ -1,0 +1,54 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: wallabag-l7-policy
+  namespace: wallabag
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: wallabag
+  ingress:
+  # Allow traffic from the ingress controller
+  - fromEndpoints:
+    - matchLabels:
+        reserved: ingress
+    toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+      rules:
+        http:
+        - {}
+  # General ingress rule (might be redundant with the above, but keeping for completeness)
+  - fromEndpoints:
+    - {}
+    toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+      rules:
+        http:
+        - {}
+  egress:
+  # Allow access to Redis in database namespace
+  - toEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: database
+        app: dragonfly
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+  # Allow access to PostgreSQL in database namespace
+  - toEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: database
+        app: postgres17
+    toPorts:
+    - ports:
+      - port: "5432"
+        protocol: TCP
+  # Allow egress to the internet
+  - toEntities:
+    - world

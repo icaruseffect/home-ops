@@ -1,0 +1,88 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: postgres-operator
+  namespace: database-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: postgres-operator
+      version: "1.12.2"
+      sourceRef:
+        kind: HelmRepository
+        name: postgres-operator
+        namespace: database-system
+      interval: 12h
+  maxHistory: 2
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  uninstall:
+    keepHistory: false
+  values:
+    image:
+      registry: ghcr.io
+      repository: zalando/postgres-operator
+      tag: v1.12.2
+
+    # Configure the operator
+    configGeneral:
+      # Set the docker image for PostgreSQL
+      docker_image: ghcr.io/zalando/spilo-16:3.0-p2
+      # Enable cross namespace access
+      watched_namespace: "*"
+
+    configUsers:
+      # Disable password rotation
+      enable_password_rotation: false
+      password_rotation_interval: 90
+      password_rotation_user_retention: 180
+
+    configKubernetes:
+      # Set the cluster name template
+      cluster_name_label: "cluster-name"
+      # Enable pod disruption budget
+      enable_pod_disruption_budget: true
+      # Set storage class for volumes
+      storage_resize_mode: "pvc"
+
+    configPostgresPodResources:
+      # Default resource requests
+      # default_cpu_request: 100m
+      # default_memory_request: 128Mi
+      default_cpu_limit: "1"
+      default_memory_limit: 512Mi
+
+    # Pod security context
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      runAsNonRoot: true
+
+    # Resource limits for the operator
+    resources:
+      limits:
+        cpu: 500m
+        memory: 500Mi
+      # requests:
+      #   cpu: 100m
+      #   memory: 250Mi
+
+    # Service account
+    serviceAccount:
+      create: true
+      name: postgres-operator
+
+    # RBAC
+    rbac:
+      create: true
+
+    # Enable monitoring
+    enableMonitoring: false

@@ -1,0 +1,19 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta2
+kind: HelmRelease
+metadata:
+  name: nfd
+  namespace: kube-system
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: nfd-operator
+      version: 0.x
+      sourceRef:
+        kind: HelmRepository
+        name: nfd-operator-charts
+        namespace: flux-system
+  values:
+    serviceAccount.create: true
+    replicas: 1

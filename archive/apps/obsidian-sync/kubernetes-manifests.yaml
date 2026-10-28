@@ -1,0 +1,53 @@
+# ---
+# # base/namespace.yaml
+# apiVersion: v1
+# kind: Namespace
+# metadata:
+#   name: obsidian-sync
+
+
+
+
+
+# ---
+# # base/kustomization.yaml
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
+# resources:
+# - namespace.yaml
+# - pvc.yaml
+# - configmap.yaml
+# - secret.yaml
+# - deployment.yaml
+# - service.yaml
+# - ingress.yaml
+# ---
+# # overlays/production/kustomization.yaml
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
+# bases:
+# - ../../base
+# patchesStrategicMerge:
+# - patch.yaml
+---
+# overlays/production/patch.yaml
+# This file can contain environment-specific overrides
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: couchdb
+#   namespace: obsidian-sync
+# spec:
+#   template:
+#     spec:
+#       # Add any production-specific configs here
+#       # Example: resource limits
+#       containers:
+#       - name: couchdb
+#         resources:
+#           limits:
+#             cpu: "1"
+#             memory: "1Gi"
+#           requests:
+#             cpu: "200m"
+#             memory: "512Mi"

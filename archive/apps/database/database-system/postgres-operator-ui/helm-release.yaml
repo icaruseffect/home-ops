@@ -1,0 +1,111 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: postgres-operator-ui
+  namespace: postgres-operator
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: postgres-operator-ui
+      version: "1.12.2"
+      sourceRef:
+        kind: HelmRepository
+        name: postgres-operator-ui
+        namespace: database-system
+      interval: 12h
+  maxHistory: 2
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  uninstall:
+    keepHistory: false
+  dependsOn:
+    - name: postgres-operator
+  values:
+    image:
+      registry: ghcr.io
+      repository: zalando/postgres-operator-ui
+      tag: v1.12.2
+
+    # Resource limits for the UI
+    resources:
+      limits:
+        cpu: 200m
+        memory: 200Mi
+      requests:
+        cpu: 100m
+        memory: 100Mi
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8081
+
+    # Pod security context
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      runAsNonRoot: true
+
+    # Security context
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 1000
+
+    # Service account
+    serviceAccount:
+      create: true
+      name: postgres-operator-ui
+
+    # RBAC
+    rbac:
+      create: true
+
+    # Ingress configuration
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+      hosts:
+        - host: postgres-ui.${SECRET_DOMAIN}
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - hosts:
+            - postgres-ui.${SECRET_DOMAIN}
+          secretName: postgres-operator-ui-tls
+
+    # Environment variables
+    env:
+      # Target namespace to watch (can be * for all namespaces)
+      TARGET_NAMESPACE: "*"
+      # PostgreSQL operator namespace
+      OPERATOR_NAMESPACE: database-system
+      # UI configuration
+      APP_URL: "https://postgres-ui.${SECRET_DOMAIN}"
+      WALE_S3_ENDPOINT: ""
+      SPILO_S3_BACKUP_PREFIX: ""
+
+    # Node selector
+    nodeSelector: {}
+
+    # Tolerations
+    tolerations: []
+
+    # Affinity
+    affinity: {}

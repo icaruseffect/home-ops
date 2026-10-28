@@ -1,0 +1,21 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: wallabag-allow-all
+  namespace: wallabag
+spec:
+  # Target the actual pod labels from the Hubble UI
+  endpointSelector:
+    matchLabels:
+      instance: wallabag
+      name: wallabag
+  ingress:
+  # Allow all ingress traffic to port 80
+  - toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+  egress:
+  # Allow all egress traffic
+  - {}

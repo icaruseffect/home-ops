@@ -1,0 +1,22 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    type: 'generated'
+    app: 'authelia'
+secretGenerator:
+  - name: 'authelia'
+    files:
+      - 'DUO_SECRET_KEY'
+      - 'JWT_SECRET'
+      - 'LDAP_PASSWORD'
+      - 'OIDC_HMAC_SECRET'
+      - 'OIDC_ISSUER_PRIVATE_KEY'
+      - 'REDIS_PASSWORD'
+      - 'REDIS_SENTINEL_PASSWORD'
+      - 'SESSION_SECRET'
+      - 'SMTP_PASSWORD'
+      - 'STORAGE_ENCRYPTION_KEY'
+      - 'STORAGE_PASSWORD'
+...

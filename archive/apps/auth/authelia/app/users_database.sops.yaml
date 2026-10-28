@@ -1,0 +1,28 @@
+# yamllint enable rule:line-length
+apiVersion: v1
+kind: Secret
+metadata:
+    name: users-database
+stringData:
+    users_database.yaml: ENC[AES256_GCM,data:d2lxSMMkaoZJEjtqujNk1VwUrfT5CyRePGSBfaY+8dVrz4dPZR2BnRJCxAjGWIZ1iOfbuFzCLggk82v0Mes6vP3NriIlXYscLFZJEijgU3AAG3hX1Us+mqNmR4A1vpb3DK5hl8cMKUKgLE/4SUN58JjiOKpMv9POKWliHNgLUMvbuldlv6AzZaGBtb23OzImKywN4t9WE2POJ7E4Z+B4V6gIIKkvR+CYhKxNlbbU04EN6si48cutF1aiLyQZlE0bxuii1EJUG5u1A2GiEqPhIDvmSkU3R1aX5LmwfwVQkyMgM5zwqtRT4V/Ige2L+TPF3/G5qbT54r73eN69G0tx,iv:4yQNPOaQ/Y7R7SwgEbGXXQuIKC5+Z/1qeIt4dNXdVSI=,tag:xApf1IOo/UJUtMQzXDK3sw==,type:str]
+type: Opaque
+sops:
+    kms: []
+    gcp_kms: []
+    azure_kv: []
+    hc_vault: []
+    age:
+        - recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBsRnQ3UjBMRVdmNmdScFVk
+            MDV5dWFHczRTZk9rUzZuRU9TUXdLSmY2QlJJCnB2K0ZtMGFZR2taeWdmb3lQek9J
+            RFlrc3ZhU0xNa3FYc1Q3R3VIbVpWYm8KLS0tICtrYnh1dVgzTHdMaitQbjRVdld3
+            T3FhcDNvcXAzSWkwcGtwOW5mOVl2ZkkKo6+E+i1MnsN2R3Tg4sGodNCrENY2//jn
+            Kyf9wNjyLWQ65czulEhFZ5wtgWTSqSMiCBGugCPpvm7igFviCVULBg==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2025-03-31T11:10:19Z"
+    mac: ENC[AES256_GCM,data:Mk8aSEKVdfqUeBGoPIwgts4RP8uw5V1wom1uq/1EYFvlcMW5IOMoNIqMXE9Qk1xNdrQsMsE+0/qhNgz2tN5Qf4vRZR5ahdA7gZCysI8Ly62Fe3+ZA5+P7mvgcKRKS1uvFgwSb8JGoR7xY53BAwCsLSq2J3UXUYql3X7tvgfwtWk=,iv:ZR0CNDxOaOZqUA2RG/U/Wau6Z19QKoXN4TMy2ePX+4c=,tag:nw6wAlxmh4bfTXmVPUDUqw==,type:str]
+    pgp: []
+    encrypted_regex: ^(data|stringData)$
+    version: 3.9.4

@@ -1,0 +1,18 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/kustomize.toolkit.fluxcd.io/kustomization_v1.json
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-longhorn-system
+  namespace: flux-system
+  annotations:
+    backstage.io/discovery: enabled
+    backstage.io/name: longhorn-system
+spec:
+  interval: 10m
+  path: ./kubernetes/homelab/apps/longhorn-system/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: home-ops
+  wait: true

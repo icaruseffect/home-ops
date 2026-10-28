@@ -1,0 +1,59 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumEnvoyConfig
+metadata:
+  name: wallabag-cache-headers
+  namespace: wallabag
+spec:
+  resources:
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: wallabag-cache-headers-listener
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: wallabag_cache
+                route_config:
+                  name: wallabag_cache_routes
+                  virtual_hosts:
+                    - name: wallabag_cache
+                      domains: ["bag.klingel.cloud"]
+                      routes:
+                        # CSS files
+                        - match:
+                            path_specifier:
+                              regex: ".*\\.css$"
+                          route:
+                            cluster: wallabag
+                          response_headers_to_add:
+                            - header:
+                                key: "Cache-Control"
+                                value: "max-age=2592000, public"
+                        # Image files
+                        - match:
+                            path_specifier:
+                              regex: ".*\\.(gif|ico|jpe?g|png|svg|webp)$"
+                          route:
+                            cluster: wallabag
+                          response_headers_to_add:
+                            - header:
+                                key: "Cache-Control"
+                                value: "max-age=2592000, public, immutable"
+                        # JavaScript files
+                        - match:
+                            path_specifier:
+                              regex: ".*\\.js$"
+                          route:
+                            cluster: wallabag
+                          response_headers_to_add:
+                            - header:
+                                key: "Cache-Control"
+                                value: "max-age=2592000, private"
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  # serviceSelector:
+  #   matchLabels:
+  #     app.kubernetes.io/name: wallabag

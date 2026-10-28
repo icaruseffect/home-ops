@@ -1,0 +1,10 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: shiori-db
+spec:
+  name: shiori
+  owner: shiori
+  cluster:
+    name: cluster17
