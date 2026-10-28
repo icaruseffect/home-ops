@@ -74,7 +74,8 @@ tasks:
           rm -f controlplane.yaml worker.yaml \
                 machineconfig_patched.yaml machineconfig_live*.yaml machineconfig_tmp \
                 admin.crt admin.csr admin.key ca.crt ca.key kubeconfig talosconfig*
-          find patches -maxdepth 1 -type f -name '*.yaml' ! -name '*.sops.yaml' -delete
+          # only the decrypted twins of patches/*.sops.yaml; tracked plaintext patches stay
+          for f in patches/*.sops.yaml; do rm -f "${f%.sops.yaml}.yaml"; done
 
   patch:copy-mc:
     dir: infra/talos/contabo
@@ -97,7 +98,7 @@ tasks:
             talosctl mc patch machineconfig_patched.yaml --patch @"$p" > /tmp/machineconfig_tmp && cp /tmp/machineconfig_tmp machineconfig_patched.yaml
           done
           rm -f /tmp/machineconfig_tmp
-      - cmd: rm -f controlplane.yaml worker.yaml && find patches -maxdepth 1 -type f -name '*.yaml' ! -name '*.sops.yaml' -delete
+      - cmd: rm -f controlplane.yaml worker.yaml && for f in patches/*.sops.yaml; do rm -f "${f%.sops.yaml}.yaml"; done
     preconditions:
       # if template and patched file are the same after copying the template run the patches
       - sh: "[[ $(sha256sum machineconfig_patched.yaml | awk '{ print $1 }') = $(sha256sum controlplane.yaml | awk '{ print $1 }' ) ]]"
