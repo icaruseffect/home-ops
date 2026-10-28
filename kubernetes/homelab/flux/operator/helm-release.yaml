@@ -29,7 +29,10 @@ spec:
   values:
     serviceMonitor:
       create: false
-    # resources:
-    #   requests:
-    #     cpu: 10m
-    #     memory: 100Mi
+    resources:
+      requests:
+        cpu: 10m
+        memory: 100Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi

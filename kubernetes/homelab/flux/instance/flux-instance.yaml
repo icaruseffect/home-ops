@@ -23,6 +23,21 @@ spec:
     size: 10Gi
   kustomize:
     patches:
+      # kustomize-controller and notification-controller are deliberately scaled to 0/0 on
+      # this cluster: manual `kubectl apply`/`sops -d | kubectl apply` is the required
+      # workflow for plain manifests here (see CLAUDE.md - "Flux is not auto-reconciling").
+      # Without this patch, flux-operator reconciles the FluxInstance's desired component
+      # state and restores both to their normal replica count on every reconcile.
+      - patch: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: not-used
+          spec:
+            replicas: 0
+        target:
+          kind: Deployment
+          name: (kustomize-controller|notification-controller)
       # prevent deletion of namespace by flux
       - patch: |
           - op: add
@@ -70,6 +85,26 @@ spec:
         target:
           kind: Deployment
           name: (kustomize-controller|helm-controller|source-controller)
+      # image-reflector/image-automation-controller are idle almost all the time on this
+      # cluster (no image scanning/patching load) - the chart default 1000m/1Gi limits are
+      # unused headroom that just adds to node CPU-limit overcommit. Cap them lower.
+      - patch: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: not-used
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: manager
+                    resources:
+                      limits:
+                        cpu: 250m
+                        memory: 256Mi
+        target:
+          kind: Deployment
+          name: (image-reflector-controller|image-automation-controller)
       # Enable Helm near OOM detection
       # https://fluxcd.io/flux/cheatsheets/bootstrap/#enable-helm-near-oom-detection
       - patch: |
