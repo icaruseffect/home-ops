@@ -1,0 +1,19 @@
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: monthly
+  namespace: velero
+spec:
+  schedule: 0 0 1 * *
+  skipImmediately: false
+  template:
+    csiSnapshotTimeout: 0s
+    defaultVolumesToFsBackup: true
+    hooks: {}
+    includedNamespaces:
+      - "*"
+    itemOperationTimeout: 0s
+    metadata: {}
+    ttl: 2160h0m0s
+  useOwnerReferencesInBackup: false

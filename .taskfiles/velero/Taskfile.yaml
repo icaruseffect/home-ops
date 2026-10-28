@@ -1,0 +1,93 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+vars:
+  KUBE_CONTEXT: '{{.KUBE_CONTEXT | default "${SECRET_DOMAIN}"}}'
+  VELERO_NS: velero
+  # Newest Completed backup whose includedNamespaces covers NAMESPACE and whose
+  # excludedNamespaces does not. Global "latest" is wrong: schedule backups can
+  # omit the namespace (noodle-* vs cloud).
+  LATEST_JQ: >-
+    [.items[]
+      | select(.status.phase=="Completed")
+      | select((.spec.excludedNamespaces // []) | index($ns) | not)
+      | select(
+          ((.spec.includedNamespaces // []) | length == 0) or
+          ((.spec.includedNamespaces // []) | index($ns)) or
+          ((.spec.includedNamespaces // []) | index("*"))
+        )]
+    | sort_by(.status.startTimestamp) | last | .metadata.name
+
+tasks:
+  default:
+    cmds:
+      - task: --list
+
+  # CLAUDE.md: never run kubectl against an unverified context. Fail closed.
+  context:check:
+    silent: true
+    cmds:
+      - |
+        cur="$(kubectl config current-context 2>/dev/null || true)"
+        [ "$cur" = "{{.KUBE_CONTEXT}}" ] || { echo "refusing: current-context='${cur}', expected '{{.KUBE_CONTEXT}}'" >&2; exit 1; }
+
+  backups:
+    desc: List Velero backups, newest first
+    deps: [context:check]
+    cmds:
+      - |
+        kubectl --context {{.KUBE_CONTEXT}} -n {{.VELERO_NS}} get backups.velero.io \
+          -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,START:.status.startTimestamp \
+          | { head -1; tail -n +2 | tac; }
+
+  latest:
+    desc: Print the newest Completed backup that includes a namespace
+    deps: [context:check]
+    requires:
+      vars:
+        - namespace
+    cmds:
+      - |
+        kubectl --context {{.KUBE_CONTEXT}} -n {{.VELERO_NS}} get backups.velero.io -o json \
+          | jq -r --arg ns "{{.namespace}}" '{{.LATEST_JQ}}'
+
+  restores:
+    desc: List Velero restores
+    deps: [context:check]
+    cmds:
+      - velero --kubecontext {{.KUBE_CONTEXT}} restore get
+
+  restore:namespace:
+    desc: |
+      Restore one namespace from its newest Completed backup (or backup=<name>).
+      Namespace need not exist: Velero recreates it. Uses --existing-resource-policy=update.
+      Usage: go-task velero:restore:namespace namespace=nextcloud [backup=daily-...]
+    deps: [context:check]
+    vars:
+      BACKUP: '{{.backup | default ""}}'
+      LATEST:
+        sh: kubectl --context {{.KUBE_CONTEXT}} -n {{.VELERO_NS}} get backups.velero.io -o json | jq -r --arg ns "{{.namespace}}" '{{.LATEST_JQ}}'
+    requires:
+      vars:
+        - namespace
+    preconditions:
+      - sh: command -v velero >/dev/null
+        msg: velero CLI not found in PATH
+    cmds:
+      - |
+        set -euo pipefail
+        backup="{{.BACKUP}}"
+        if [ -z "$backup" ]; then
+          backup="{{.LATEST}}"
+        fi
+        if [ -z "$backup" ] || [ "$backup" = "null" ]; then
+          echo "no Completed backup includes namespace {{.namespace}}" >&2
+          exit 1
+        fi
+        name="restore-{{.namespace}}-$(date +%Y%m%d%H%M%S)"
+        echo "restoring namespace {{.namespace}} from backup ${backup} as ${name}"
+        velero --kubecontext {{.KUBE_CONTEXT}} restore create "${name}" \
+          --from-backup "${backup}" --include-namespaces {{.namespace}} \
+          --existing-resource-policy update --wait
+      - velero --kubecontext {{.KUBE_CONTEXT}} restore get

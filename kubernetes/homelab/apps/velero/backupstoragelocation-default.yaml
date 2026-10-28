@@ -1,0 +1,26 @@
+---
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  annotations:
+    meta.helm.sh/release-name: velero
+    meta.helm.sh/release-namespace: velero
+  labels:
+    component: velero
+  name: default
+  namespace: velero
+spec:
+  config:
+    # checksumAlgorithm: ""
+    profile: default
+    region: EU
+    s3ForcePathStyle: "true"
+    s3Url: https://eu2.contabostorage.com
+  credential:
+    key: cloud
+    name: cloud-credentials
+  default: true
+  objectStorage:
+    bucket: velero
+    prefix: homelab
+  provider: aws

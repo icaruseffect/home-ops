@@ -1,0 +1,172 @@
+---
+affinity: {}
+annotations: {}
+backupsEnabled: true
+cleanUpCRDs: false
+configMaps: {}
+configuration:
+  defaultVolumesToFsBackup: true
+  disableInformerCache: false
+  extraArgs: []
+  extraEnvVars: {}
+  features: EnableCSI
+  repositoryMaintenanceJob:
+    latestJobsCount: 3
+    limits: null
+    requests: null
+  uploaderType: restic
+  volumeSnapshotLocation:
+    - config: {}
+      credential:
+        key: null
+        name: null
+      name: null
+      provider: null
+containerSecurityContext: {}
+credentials:
+  extraEnvVars: {}
+  extraSecretRef: ""
+  secretContents: {}
+  useSecret: true
+deployNodeAgent: true
+dnsConfig: {}
+dnsPolicy: ClusterFirst
+extraObjects: []
+extraVolumeMounts: []
+extraVolumes: []
+fullnameOverride: ""
+image:
+  imagePullSecrets: []
+  pullPolicy: IfNotPresent
+  repository: velero/velero
+  tag: v1.13.2
+initContainers:
+  - image: velero/velero-plugin-for-csi:v0.7.0
+    imagePullPolicy: IfNotPresent
+    name: velero-plugin-for-csi
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+  - image: velero/velero-plugin-for-aws:v1.9.0
+    imagePullPolicy: IfNotPresent
+    name: velero-plugin-for-aws
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+kubectl:
+  annotations: {}
+  containerSecurityContext: {}
+  image:
+    repository: docker.io/bitnami/kubectl
+  labels: {}
+  resources: {}
+labels: {}
+lifecycle: {}
+livenessProbe:
+  failureThreshold: 5
+  httpGet:
+    path: /metrics
+    port: http-monitoring
+    scheme: HTTP
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  successThreshold: 1
+  timeoutSeconds: 5
+metrics:
+  enabled: true
+  nodeAgentPodMonitor:
+    additionalLabels:
+      release: prometheus-stack
+    annotations: {}
+    autodetect: true
+    enabled: true
+    namespace: observability
+  podAnnotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8085"
+    prometheus.io/scrape: "true"
+  prometheusRule:
+    additionalLabels:
+      release: prometheus-stack
+    autodetect: true
+    enabled: true
+    namespace: observability
+    spec:
+      - alert: VeleroBackupPartialFailures
+        annotations:
+          message:
+            Velero backup {{ $labels.schedule }} has {{ $value | humanizePercentage
+            }} partialy failed backups.
+        expr:
+          velero_backup_partial_failure_total{schedule!=""} / velero_backup_attempt_total{schedule!=""}
+          > 0.25
+        for: 15m
+        labels:
+          severity: warning
+      - alert: VeleroBackupFailures
+        annotations:
+          message:
+            Velero backup {{ $labels.schedule }} has {{ $value | humanizePercentage
+            }} failed backups.
+        expr:
+          velero_backup_failure_total{schedule!=""} / velero_backup_attempt_total{schedule!=""}
+          > 0.25
+        for: 15m
+        labels:
+          severity: warning
+  scrapeInterval: 30s
+  scrapeTimeout: 10s
+  service:
+    annotations: {}
+    labels: {}
+  serviceMonitor:
+    additionalLabels: {}
+    annotations:
+      meta.helm.sh/release-name: prometheus-stack
+    autodetect: true
+    enabled: true
+    namespace: observability
+nameOverride: ""
+namespace:
+  labels: {}
+nodeSelector: {}
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+priorityClassName: ""
+rbac:
+  clusterAdministrator: true
+  clusterAdministratorName: cluster-admin
+  create: true
+readinessProbe:
+  failureThreshold: 5
+  httpGet:
+    path: /metrics
+    port: http-monitoring
+    scheme: HTTP
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  successThreshold: 1
+  timeoutSeconds: 5
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 500m
+    memory: 128Mi
+schedules: {}
+secretAnnotations: {}
+serviceAccount:
+  server:
+    create: true
+    imagePullSecrets: []
+snapshotsEnabled: false
+terminationGracePeriodSeconds: 3600
+tolerations: []
+upgradeCRDs: true
+# upgradeCRDsJob:
+#   extraEnvVars: {}
+#   extraVolumeMounts: []
+#   extraVolumes: []
+upgradeJobResources: {}
