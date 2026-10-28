@@ -1,4 +1,0 @@
----
-providerRegex: |
-  ^(kube-nas)$
-replicas: 1
