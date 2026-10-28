@@ -52,6 +52,8 @@ megalinter-reports/
 infra/talos/clusterconfig/*.yaml
 **/talosconfig
 **/machineconfig*.yaml
+infra/talos/contabo/controlplane.yaml
+infra/talos/contabo/worker.yaml
 
 # bootstrap helm charts
 kubernetes/**/bootstrap/**/charts

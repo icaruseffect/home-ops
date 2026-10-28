@@ -23,8 +23,55 @@ tasks:
     cmds:
       - "talhelper genconfig"
 
+  secrets:decrypt:
+    desc: Decrypt age-encrypted talos machineconfig secrets to plaintext (gitignored artifacts)
+    dir: infra/talos/contabo
+    cmds:
+      - |
+        set -e
+        sops -d controlplane.sops.yaml > controlplane.yaml.tmp
+        mv controlplane.yaml.tmp controlplane.yaml
+      - |
+        set -e
+        sops -d worker.sops.yaml > worker.yaml.tmp
+        mv worker.yaml.tmp worker.yaml
+      - |
+        set -e
+        sops -d patches/wireguard-secret.sops.yaml > patches/wireguard-secret.yaml.tmp
+        mv patches/wireguard-secret.yaml.tmp patches/wireguard-secret.yaml
+    preconditions:
+      - sh: which sops >/dev/null 2>&1
+        msg: sops not found in PATH
+      - test -f controlplane.sops.yaml
+      - test -f worker.sops.yaml
+      - test -f patches/wireguard-secret.sops.yaml
+
+  secrets:encrypt:
+    desc: Re-encrypt plaintext machineconfig secrets back to .sops.yaml (after manual edits)
+    dir: infra/talos/contabo
+    cmds:
+      - |
+        set -e
+        sops -e --filename-override controlplane.sops.yaml controlplane.yaml > controlplane.sops.yaml.tmp
+        mv controlplane.sops.yaml.tmp controlplane.sops.yaml
+      - |
+        set -e
+        sops -e --filename-override worker.sops.yaml worker.yaml > worker.sops.yaml.tmp
+        mv worker.sops.yaml.tmp worker.sops.yaml
+      - |
+        set -e
+        sops -e --filename-override patches/wireguard-secret.sops.yaml patches/wireguard-secret.yaml > patches/wireguard-secret.sops.yaml.tmp
+        mv patches/wireguard-secret.sops.yaml.tmp patches/wireguard-secret.sops.yaml
+
+  secrets:clean:
+    desc: Delete all plaintext talos machineconfig secrets after use
+    dir: infra/talos/contabo
+    cmds:
+      - rm -f controlplane.yaml worker.yaml patches/wireguard-secret.yaml machineconfig_patched.yaml
+
   patch:copy-mc:
     dir: infra/talos/contabo
+    deps: [secrets:decrypt]
     cmds:
       - cmd: cp controlplane.yaml machineconfig_patched.yaml
 
@@ -36,6 +83,8 @@ tasks:
       - patches/*.yaml
     # generates:
     # - contabo/machineconfig_patched.yaml
+    excludes:
+      - patches/*.sops.yaml
     run: always
     cmds:
       - cmd: echo $PWD
@@ -44,6 +93,7 @@ tasks:
       - for: sources
         cmd: talosctl mc patch machineconfig_patched.yaml --patch @{{.ITEM}} > /tmp/machineconfig_tmp && cp /tmp/machineconfig_tmp machineconfig_patched.yaml
       - cmd: rm /tmp/machineconfig_tmp
+      - cmd: rm -f controlplane.yaml worker.yaml patches/wireguard-secret.yaml
     preconditions:
       # if template and patched file are the same after copying the template run the patches
       - sh: "[[ $(sha256sum machineconfig_patched.yaml | awk '{ print $1 }') = $(sha256sum controlplane.yaml | awk '{ print $1 }' ) ]]"
@@ -59,6 +109,7 @@ tasks:
         talosctl apply-config --insecure \
           --file machineconfig_patched.yaml \
           --nodes $NODE_IP
+      - task: secrets:clean
 
   bootstrap:apply-config-secure:
     desc: Install contabo
@@ -68,6 +119,7 @@ tasks:
         talosctl apply-config  \
           --file machineconfig_patched.yaml \
           --nodes $NODE_IP
+      - task: secrets:clean
 
   update:talos01:
     desc: Update talos01
