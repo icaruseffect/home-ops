@@ -17,7 +17,15 @@ spec:
       interval: 30m
   values:
     args:
-      - --kubelet-insecure-tls
+      - --kubelet-certificate-authority=/etc/ssl/certs/ca.crt
+    extraVolumes:
+      - name: kube-root-ca
+        configMap:
+          name: kube-root-ca.crt
+    extraVolumeMounts:
+      - name: kube-root-ca
+        mountPath: /etc/ssl/certs
+        readOnly: true
     metrics:
       enabled: true
     serviceMonitor:

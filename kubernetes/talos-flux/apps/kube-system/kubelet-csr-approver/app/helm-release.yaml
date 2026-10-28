@@ -17,6 +17,6 @@ spec:
       interval: 30m
   values:
     providerRegex: |
-      ^(talos01|talos02|talos03|talos04)$
+      ^(contabo-de-1|talos\d+)$
 
     bypassDnsResolution: true
