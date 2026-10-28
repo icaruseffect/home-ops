@@ -62,6 +62,7 @@ metadata:
   name: flux-apps
   namespace: flux-system
 spec:
+  suspend: true
   dependsOn:
     - name: flux-system
     - name: flux-repositories
