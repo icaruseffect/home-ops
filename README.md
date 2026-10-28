@@ -12,7 +12,7 @@
 -->
 
 [![taskfile][taskfile-shield]][taskfile-url]
-[![pre-commit][pre-commit-shield]][pre-commit-url]
+[![prek][pre-commit-shield]][pre-commit-url]
 [![renovate][renovate-shield]][renovate-dashboard-url]
 [![commits][commits-shield]][commits-url]
 [![talos][talos-shield]][talos-url]
@@ -206,7 +206,7 @@ example:
 [taskfile-shield]: https://img.shields.io/badge/Taskfile-Enabled-brightgreen?style=for-the-badge&logo=task
 [taskfile-url]: https://taskfile.dev/
 [pre-commit-shield]: https://img.shields.io/badge/pre--commit-enabled-brightgreen?style=for-the-badge&logo=pre-commit
-[pre-commit-url]: https://github.com/pre-commit/pre-commit
+[pre-commit-url]: https://github.com/j178/prek
 [renovate-shield]: https://img.shields.io/badge/renovate-enabled-brightgreen?style=for-the-badge&logo=renovatebot
 [renovate-url]: https://www.whitesourcesoftware.com/free-developer-tools/renovate/
 [commits-shield]: https://img.shields.io/github/last-commit/tyriis/home-ops?style=for-the-badge&logo=github
