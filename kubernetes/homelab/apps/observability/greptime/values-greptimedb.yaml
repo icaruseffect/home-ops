@@ -31,10 +31,6 @@ logging:
   format: json
   onlyLogToStdout: true
 
-# Chart default (4006) made the Service targetPort point at an API listener
-# nothing serves for Loki push; the HTTP server binds 4000 (--http-addr).
-httpApiServerPort: 4000
-
 service:
   type: ClusterIP
 
