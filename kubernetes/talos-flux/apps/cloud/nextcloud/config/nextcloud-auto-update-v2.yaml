@@ -1,0 +1,273 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nextcloud
+  namespace: cloud
+spec:
+  interval: 30m
+  # Automatically upgrade chart when new versions are available
+  chart:
+    spec:
+      chart: nextcloud
+      # Use a version range that allows patch and minor updates
+      # This will auto-update to the latest chart version within the 6.x range
+      version: "6.x"
+      sourceRef:
+        kind: HelmRepository
+        name: nextcloud-charts
+        namespace: flux-system
+      # How often to check for chart updates
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  # Add values for image version automation
+  values:
+    image:
+      # If you want specific image repository
+      # repository: nextcloud
+      # Leave tag empty to allow for automation
+      # tag: ""
+      # Add pullPolicy for better control
+      pullPolicy: IfNotPresent
+    # Add the hooks as Helm templates in the additional values
+    hooks:
+      preUpgrade:
+        enabled: true
+        maintenanceMode:
+          job:
+            annotations:
+              helm.sh/hook: "pre-upgrade"
+              helm.sh/hook-weight: "-5"
+              helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+            container:
+              securityContext:
+                runAsUser: 0
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  echo "[INFO] Enabling Nextcloud maintenance mode..."
+                  runuser -u www-data -- php /var/www/html/occ maintenance:mode --on
+                  echo "[INFO] Maintenance mode enabled successfully."
+        # backup:
+        #   job:
+        #     annotations:
+        #       helm.sh/hook: "pre-upgrade"
+        #       helm.sh/hook-weight: "-3"
+        #       helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+        #     serviceAccountName: velero-backup-creator
+        #     container:
+        #       image: velero/velero:latest
+        #       command:
+        #         - /bin/sh
+        #         - -c
+        #         - |
+        #           echo "[INFO] Creating Nextcloud backup before upgrade..."
+        #           velero backup create nextcloud-pre-upgrade-$(date +%Y%m%d-%H%M%S) \
+        #             --include-namespaces cloud,database \
+        #             --include-resources persistentvolumeclaims,persistentvolumes \
+        #             --wait
+        #           echo "[INFO] Backup completed successfully."
+      postUpgrade:
+        enabled: true
+        job:
+          annotations:
+            helm.sh/hook: "post-upgrade"
+            helm.sh/hook-weight: "5"
+            helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+          backoffLimit: 3
+          container:
+            securityContext:
+              runAsUser: 0
+            command:
+              - /bin/bash
+              - -c
+              - |
+                # Wait for Nextcloud to be fully ready
+                echo "[INFO] Waiting for Nextcloud to be ready..."
+                attempt=0
+                max_attempts=30
+                while [ $attempt -lt $max_attempts ]; do
+                  if curl -s -k -o /dev/null https://nextcloud.svc.cluster.local/status.php; then
+                    echo "[INFO] Nextcloud is ready. Proceeding with post-upgrade steps."
+                    break
+                  fi
+                  attempt=$((attempt+1))
+                  echo "[WARN] Attempt $attempt/$max_attempts: Nextcloud not ready yet, waiting..."
+                  sleep 10
+                done
+
+                if [ $attempt -eq $max_attempts ]; then
+                  echo "[ERROR] Nextcloud did not become ready in time. Proceeding with post-upgrade steps anyway."
+                fi
+
+                # Run the Nextcloud upgrade process
+                echo "[INFO] Running Nextcloud occ upgrade..."
+                runuser -u www-data -- php /var/www/html/occ upgrade
+                if [ $? -ne 0 ]; then
+                  echo "[ERROR] Nextcloud upgrade failed. Check logs for details."
+                  exit 1
+                else
+                  echo "[INFO] Nextcloud upgrade completed successfully."
+                fi
+
+                # Update apps after core upgrade
+                echo "[INFO] Updating all apps..."
+                runuser -u www-data -- php /var/www/html/occ app:update --all
+
+                # Run post-upgrade file scan
+                echo "[INFO] Running post-upgrade file scan..."
+                runuser -u www-data -- php /var/www/html/occ files:scan --all
+
+                # Run database integrity check
+                echo "[INFO] Checking database integrity..."
+                runuser -u www-data -- php /var/www/html/occ db:add-missing-indices
+
+                # Disable maintenance mode
+                echo "[INFO] Disabling maintenance mode..."
+                runuser -u www-data -- php /var/www/html/occ maintenance:mode --off
+                if [ $? -ne 0 ]; then
+                  echo "[ERROR] Failed to disable maintenance mode. Check logs for details."
+                  exit 1
+                else
+                  echo "[INFO] Maintenance mode disabled successfully."
+                fi
+
+  # Add the dependency on the image update automation
+  dependsOn:
+    - name: nextcloud-image-automation
+      namespace: flux-system
+
+  valuesFrom:
+    - kind: ConfigMap
+      name: nextcloud-helm-values
+---
+# Next, create a new file for the hooks templates to include with your chart
+# hooks-templates/templates/pre-upgrade-maintenance.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nextcloud-pre-upgrade-maintenance
+  namespace: "{{ .Release.Namespace }}"
+  annotations: "{{- toYaml .Values.hooks.preUpgrade.maintenanceMode.job.annotations | nindent 4 }}"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: maintenance-on
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          securityContext: "{{- toYaml .Values.hooks.preUpgrade.maintenanceMode.job.container.securityContext | nindent 10 }}"
+          command: "{{- toYaml .Values.hooks.preUpgrade.maintenanceMode.job.container.command | nindent 10 }}"
+          volumeMounts:
+            - name: nextcloud-data
+              mountPath: /var/www/html
+      volumes:
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: "{{ .Release.Name }}-nextcloud"
+---
+# hooks-templates/templates/pre-upgrade-backup.yaml
+#{{- if .Values.hooks.preUpgrade.enabled }}
+# apiVersion: batch/v1
+# kind: Job
+# metadata:
+#   name: nextcloud-pre-upgrade-backup
+#   namespace: "{{ .Release.Namespace }}"
+#   annotations:
+#     "{{- toYaml .Values.hooks.preUpgrade.backup.job.annotations | nindent 4 }}"
+# spec:
+#   template:
+#     spec:
+#       serviceAccountName: "{{ .Values.hooks.preUpgrade.backup.job.serviceAccountName }}"
+#       restartPolicy: Never
+#       containers:
+#       - name: velero-backup
+#         image: "{{ .Values.hooks.preUpgrade.backup.job.container.image }}"
+#         command:
+#           "{{- toYaml .Values.hooks.preUpgrade.backup.job.container.command | nindent 10 }}"
+#{{- end }}
+---
+# hooks-templates/templates/post-upgrade-tasks.yaml
+#{{- if .Values.hooks.postUpgrade.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nextcloud-post-upgrade-tasks
+  namespace: "{{ .Release.Namespace }}"
+  annotations: "{{- toYaml .Values.hooks.postUpgrade.job.annotations | nindent 4 }}"
+spec:
+  backoffLimit: "{{ .Values.hooks.postUpgrade.job.backoffLimit }}"
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: post-upgrade
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          securityContext: "{{- toYaml .Values.hooks.postUpgrade.job.container.securityContext | nindent 10 }}"
+          command: "{{- toYaml .Values.hooks.postUpgrade.job.container.command | nindent 10 }}"
+          volumeMounts:
+            - name: nextcloud-data
+              mountPath: /var/www/html
+      volumes:
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: "{{ .Release.Name }}-nextcloud"
+#{{- end }}
+---
+# Image Automation for Nextcloud
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: nextcloud
+  namespace: flux-system
+spec:
+  image: nextcloud # The Docker image repository
+  interval: 1h # Check for new images hourly
+  imagePolicyRef:
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: nextcloud
+  namespace: flux-system
+spec:
+  interval: 12h
+  imageRepositoryRef:
+    name: nextcloud
+  policy:
+    semver:
+      range: ">=30.0.0 <31.0.0" # Allow minor and patch updates within v30
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageUpdateAutomation
+metadata:
+  name: nextcloud-image-automation
+  namespace: flux-system
+spec:
+  interval: 1h
+  sourceRef:
+    kind: GitRepository
+    name: flux-system # Your FluxCD configuration Git repository
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        email: fluxcdbot@users.noreply.github.com
+        name: FluxCD Bot
+      messageTemplate: "Update Nextcloud image to {{ .NewVersion }}"
+    push:
+      branch: main
+  update:
+    path: .kubernetes/talos-flux/apps/cloud/nextcloud/app # Path where your HelmRelease is stored
+    strategy: Setters

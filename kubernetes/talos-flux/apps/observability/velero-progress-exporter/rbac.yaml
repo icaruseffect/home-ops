@@ -1,0 +1,30 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: velero-progress-exporter
+  namespace: velero
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: velero-progress-exporter
+  namespace: velero
+rules:
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "podvolumerestores"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: velero-progress-exporter
+  namespace: velero
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: velero-progress-exporter
+subjects:
+  - kind: ServiceAccount
+    name: velero-progress-exporter
+    namespace: velero

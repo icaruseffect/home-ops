@@ -1,30 +1,25 @@
 # yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/cilium.io/ciliumloadbalancerippool_v2alpha1.json
-apiVersion: cilium.io/v2alpha1
+apiVersion: cilium.io/v2
 kind: CiliumLoadBalancerIPPool
 metadata:
-    name: l2-pool
+  name: l2-pool
 spec:
-    allowFirstLastIPs: "Yes"
-    blocks:
-        - cidr: ENC[AES256_GCM,data:oTQc6O2OZlDZqHWQvQ==,iv:1l7GBwzN/b7WYbDYMnn2x4xYWWe4tdLpdpwTxuDB/Mg=,tag:KzDstqh3UwpiOm2Rpu+Vkg==,type:str]
-        - cidr: ENC[AES256_GCM,data:Y54ZY5Dt8NNKsL9sM73OMXXGaLwf2VnQIQ==,iv:jC3GqoeXiuY9fIeR+jleNf593R/X0whfYIsryp4xWdM=,tag:YQY/Xei3jishJDdhBb0aXQ==,type:str]
+  allowFirstLastIPs: "Yes"
+  blocks:
+    - cidr: 86.48.3.75/32
+  #- cidr: 2a02:c206:3011:3845::1/64
 sops:
-    kms: []
-    gcp_kms: []
-    azure_kv: []
-    hc_vault: []
-    age:
-        - recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
-          enc: |
-            -----BEGIN AGE ENCRYPTED FILE-----
-            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAxZkNFdUNteEl1TmJaTUdh
-            VmptUU12NC9RV21HUjBaL05aTi9FZUtudFE0CktoL09DaDg4VGxrenFFekEvYkVq
-            M0doV0RwWURxZnJRZFdoOHJ0blB2VXcKLS0tIDhqOG81VEh2TXQ1dzU4R2NCQzFh
-            ck9rTUsrS1dkUlVSeGtIUWdmZzErckkKH5e89L7wjrmtrq+I8p8SmAMwXxtravVu
-            dShuOhKWcVPsSEBGAwYILjFoF85n/WLYx6fZ4I3FdxQ+Y6ZTr8q5+A==
-            -----END AGE ENCRYPTED FILE-----
-    lastmodified: "2025-03-15T23:06:12Z"
-    mac: ENC[AES256_GCM,data:T1mkcxtZ6qR9rh6WMYdonu2p956qkcAscbc3dd7ECCwH83CCOgSZuB7y6vVzRTTo53Kpu404yydN66PhkEMVciXwluCIrG5PS+0Xn1FSmyEHAEj28ShV963dRAxB/p+bDUsXpZ2Q0/p5+fTzgOnD/mR86YIF44MjsqLUWw2eGdE=,iv:aw9til+WkXBylnFk18ytQjtq4VovDzFFbgVd8PYDHW8=,tag:QGP2zSga0lo5B0zAbUX+Yw==,type:str]
-    pgp: []
-    encrypted_regex: blocks
-    version: 3.9.4
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBtNy8zTjZzV3luZ0Z5YkM4
+        RUJPak5VMXU3NXl6RCtDTlk5WjRQYjU3K0RjCkFwd01JUEZ4VVNwdVUxN1RqcGRm
+        NlY1aDNrRUU3Qjl3a0RRLy9aNTBJSVUKLS0tIEpTUm9IWExTZWJmWm5MMStRazd3
+        ejlNWG1Fcm5pZGhmYUdJYjh6MDVoUEUK8ADsFUkcPcF0Mf9npejtRG8WIEzXdqu/
+        Ve5Oc42sjXbfuLdJcYPZSNJOPV0X3F7m6M4NUTQivGingdzeHoqz3g==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-10-28T18:54:03Z"
+  mac: ENC[AES256_GCM,data:TkTobwkp5ISV2WyuqHZrRXygLapj034+7R7svxFkN0mqwgEYMWlRKhk1QzpFV5j2mXrJlLGS9vsRjcBAf/mYQ00j/rh9ZI0YL1o2uO+WNXHseJuaLI4kQxkY1YgIrSjJEo/WqohwQjUodo2yEk3B4DvN39D7lf6aRJGI1Faepag=,iv:QvrE+1mNkMrzpWnBr4FlSNjTSvvbuUNgmBZhM/VS+7w=,tag:Ag9cTm4zsWPqn/WeQp6Wog==,type:str]
+  version: 3.13.3

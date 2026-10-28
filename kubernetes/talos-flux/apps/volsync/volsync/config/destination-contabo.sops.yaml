@@ -1,0 +1,30 @@
+# yaml-language-server: $$=https://github.com/backube/volsync/blob/main/bundle/manifests/volsync.backube_replicationdestinations.yamlapiVersion: v1
+apiVersion: v1
+kind: Secret
+metadata:
+  name: restic-config
+type: Opaque
+stringData:
+  #ENC[AES256_GCM,data:VrA9b/1QtwxUgRgrmYR1ENIGcQ==,iv:mCLQ/wIP8JqM3jd66bT5jKAR/+CnH857HQGCpDYA6+g=,tag:6pfV/Zggl2q/7pUE3eNQ9w==,type:comment]
+  RESTIC_REPOSITORY: ENC[AES256_GCM,data:CekyFvcBixjcELY8m05GXQ+msFiCnvPEnvda2vbRFfsDYrq5eZR8RAFCPLDK3FJ7Nrth/eyLRE8=,iv:krUUH7E7MIpmXNUePd4I79lyChLw0GpumgZVYeHzAb8=,tag:0FShj/4IL8OXcklBivCcnw==,type:str]
+  #ENC[AES256_GCM,data:AVbfy2mv0FU6boXpfhs2W7KPK3ZzlD/ilFzTF224,iv:C8uCM7tKkGy7Eso1xHcseXOlsK892OY0LRTAoJyAAY4=,tag:qdDpil3oOOdKGfLedg3r5A==,type:comment]
+  RESTIC_PASSWORD: ENC[AES256_GCM,data:pD8wb36bke9rVDB4rrq8qeud8TecEqEAYQ==,iv:xJTh/3Zb+JVuVS8S8ldvTVdiWh2naHNKlMC1KVi3E0s=,tag:8FHQ4TSjQ86o9dFVfvM1zg==,type:str]
+  #ENC[AES256_GCM,data:WL5ITZwdVHKVNVO1GN2Yf5hNOLyyLN+Xv3yJ4Hf0j4icBA==,iv:VUISkA4slER+4HYkbd4Ec7V48+gy9tSuF7NQJtar23g=,tag:FHGmaOEGxybYzw4cnalSRQ==,type:comment]
+  #ENC[AES256_GCM,data:pXRPMTvQcj8wNwcj6n3hRBCcEgo/8mokUb7c62rENyllE2QXFTb/qltpt3jLsQ6CfciylzYmKKES9VuHTVIzybXo6sAjJw==,iv:qg/a8oNYucDIMSY/lOg78gNl09xhPxcFBRBMgXN+2go=,tag:AzFw+3GOhlcf5/UMqR56/g==,type:comment]
+  AWS_ACCESS_KEY_ID: ENC[AES256_GCM,data:ideBCpsg,iv:xuDPJQk3dDko08StgI+prhi5mr73PItc2buPp8u4YOU=,tag:PrzaHU3qhIkpf74jiKv2bg==,type:str]
+  AWS_SECRET_ACCESS_KEY: ENC[AES256_GCM,data:U9kJd8BHz9o=,iv:4siE0NrQaHGixSF/bY2VwYbY+PhN6XRSxMJAczg7P0U=,tag:Fc0LX8iEL3lGdeYpxreC1Q==,type:str]
+sops:
+  age:
+    - enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA2YXluNlVEcnJFVVJSRGxS
+        d1JOR0o0UkpLaDdWSmZlcmVramsvR2hiMW1VCnM5NTMzM0tFcDdMOUMxbVpUOHlr
+        VHdxN3N1QXgwaFFIbCttdVVVcGRpRmMKLS0tIFJtbGhqdjNzOG4wN0RtdVNLdytT
+        cmRaeHA4STlmMjN0NjdxT09DTXpQaEUK78PfffI5WokqFaYMLxcKBmAWMmxr9SOr
+        CBiLH1ezLvtvkBlHv96Jvj5ATP7f+/AXG8ztgrVoZa+z8mRKHwrUDw==
+        -----END AGE ENCRYPTED FILE-----
+      recipient: age15gfkljk0c50s57t86eu6gdzxenpqrn4frlmd5vwcv57w962w2cfswxz4ge
+  encrypted_regex: ^(data|stringData)$
+  lastmodified: "2026-10-28T18:54:03Z"
+  mac: ENC[AES256_GCM,data:MdYHtHerMohGbiji0jrGo5cVSupvcj0KC3rJyT+Qt8s2abqeZEkcfxGMNZfnkJv2GxriYb5PWoY9gBEk++DlkRwa68SUOcSywPIac4Q8jCFuBY2iLwbS+5TXQ1/08gdEVyjMgb7klgmhoS2emY30HI44Uq5m0cuH5p7AL3nRcU4=,iv:ZwiCfZ1KZvrb8xkUwS8RlpwMbIx5ZXCZcYTlO2nDqWY=,tag:VDW7GFWlzGkSZx+iEK9t+Q==,type:str]
+  version: 3.13.3

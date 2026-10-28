@@ -1,0 +1,63 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vdirsyncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vdirsyncer
+  template:
+    metadata:
+      labels:
+        app: vdirsyncer
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: vdirsyncer
+          image: docker.io/bleala/vdirsyncer
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SYNC_INTERVAL_SECONDS
+              value: "900" # run every 15 minutes
+            - name: TZ
+              value: "UTC"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              mkdir -p /data/status
+              vdirsyncer discover || true
+              while true; do
+                vdirsyncer sync
+                sleep "${SYNC_INTERVAL_SECONDS}"
+              done
+          volumeMounts:
+            - name: vdirsyncer-hooks
+              mountPath: /vdirsyncer/add_private_class.py
+              subPath: add_private_class.py
+            - name: config
+              mountPath: /vdirsyncer/config
+              subPath: config
+              readOnly: true
+            # - name: scripts
+            #   mountPath: /vdirsyncer/scripts
+            #   subPath: scripts
+            #   readOnly: true
+            - name: status
+              mountPath: /data
+      volumes:
+        - name: config
+          secret:
+            secretName: vdirsyncer-config
+        - name: vdirsyncer-hooks
+          configMap:
+            name: vdirsyncer-hooks
+            defaultMode: 0755
+        # - name: scripts
+        #   configMap:
+        #     Name: vdirsyncer-scripts
+        - name: status
+          persistentVolumeClaim:
+            claimName: vdirsyncer-status

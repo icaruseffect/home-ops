@@ -1,0 +1,52 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: velero-progress-exporter
+  namespace: velero
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: velero-progress-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: velero-progress-exporter
+    spec:
+      serviceAccountName: velero-progress-exporter
+      containers:
+        - name: exporter
+          image: python:3.12-alpine
+          command: ["python3", "/exporter/exporter.py"]
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: exporter
+              mountPath: /exporter
+      volumes:
+        - name: exporter
+          configMap:
+            name: velero-progress-exporter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: velero-progress-exporter
+  namespace: velero
+  labels:
+    app.kubernetes.io/name: velero-progress-exporter
+spec:
+  selector:
+    app.kubernetes.io/name: velero-progress-exporter
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

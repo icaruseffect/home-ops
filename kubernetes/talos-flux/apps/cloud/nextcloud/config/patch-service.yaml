@@ -1,0 +1,11 @@
+---
+# service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  namespace: cloud
+spec:
+  selector:
+    app: nextcloud
+  ports: []

@@ -1,0 +1,97 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: nextcloud-apache
+  namespace: cloud
+spec:
+  egress:
+    - toFQDNs:
+        - matchName: apps.nextcloud.com
+        - matchName: www.nextcloud.com
+        - matchPattern: ltd*.nextcloud.com
+        - matchPattern: garm*.nextcloud.com
+        - matchPattern: "*.startpage.com"
+        - matchPattern: "*.eff.org"
+        - matchPattern: "*.edri.org"
+        - matchPattern: github.com
+        - matchPattern: objects.githubusercontent.com
+        - matchPattern: release-assets.githubusercontent.com
+        - matchPattern: "*.posteo.de"
+        - matchPattern: "*.your-storagebox.de"
+        - matchPattern: "*.$(SECRET_DOMAIN)"
+        - matchPattern: auth.$(SECRET_DOMAIN)
+        - matchPattern: ntfy.$(SECRET_DOMAIN)
+    - toEndpoints:
+        - matchLabels:
+            k8s:app.kubernetes.io/instance: ntfy
+            k8s:app.kubernetes.io/name: ntfy
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: postgres17
+            k8s:io.kubernetes.pod.namespace: database
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: dragonfly
+            k8s:io.kubernetes.pod.namespace: database
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/component: server
+            app.kubernetes.io/instance: authentik
+            app.kubernetes.io/name: authentik
+            k8s:io.kubernetes.pod.namespace: authentik
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP
+    - toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    - toServices:
+        - k8sServiceSelector:
+            namespace: ntfy
+            selector:
+              matchLabels:
+                app.kubernetes.io/instance: ntfy
+                app.kubernetes.io/name: ntfy
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/component: app
+      k8s:app.kubernetes.io/instance: nextcloud
+      k8s:app.kubernetes.io/name: nextcloud
+  ingress:
+    - fromEntities:
+        - cluster
+        - world
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP

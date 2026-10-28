@@ -1,0 +1,147 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  finalizers:
+    - finalizers.fluxcd.io
+  generation: 21
+  name: terminagent
+  namespace: terminagent
+spec:
+  chart:
+    spec:
+      chart: app-template
+      reconcileStrategy: ChartVersion
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s-charts
+        namespace: flux-system
+      version: ">=4.0.0 <5.0.0"
+  install:
+    remediation:
+      retries: 3
+  interval: 30m
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    controllers:
+      terminagent:
+        annotations:
+          reloader.stakater.com/auto: "true"
+        containers:
+          main:
+            env:
+              BOOKING_DRY_RUN: "false"
+              BURST_DAYS: Di,Do,Fr
+              BURST_END: "10:00"
+              BURST_INTERVAL: "60"
+              BURST_START: "06:00"
+              DB_PATH: /data/terminagent.db
+              IMAP_HOST: mail.$(SECRET_DOMAIN)
+              IMAP_PORT: "993"
+              IMAP_USER: termine@$(SECRET_DOMAIN)
+              MAIL_POLL_INTERVAL: "60"
+              MIN_LEAD_MINUTES: "45"
+              NO_PROXY: ntfy.$(SECRET_DOMAIN),ntfy.ntfy.svc.cluster.local,*.svc.cluster.local,auth.$(SECRET_DOMAIN)
+              NTFY_TOPIC: KoelnTermin
+              NTFY_URL: http://ntfy.ntfy.svc.cluster.local
+              OIDC_ISSUER: https://auth.$(SECRET_DOMAIN)
+              POLL_INTERVAL: "300"
+              PUBLIC_URL: https://termine.$(SECRET_DOMAIN)
+              TZ: Europe/Berlin
+            envFrom:
+              - secretRef:
+                  name: terminagent-secrets
+              - secretRef:
+                  name: iproyal-proxy
+            image:
+              repository: ghcr.io/icaruseffect/koeln-terminagent
+              tag: latest
+              pullPolicy: Always
+            ports:
+              - containerPort: 8000
+                name: http
+                protocol: TCP
+            probes:
+              liveness:
+                custom: true
+                enabled: true
+                spec:
+                  httpGet:
+                    path: /healthz
+                    port: http
+                  initialDelaySeconds: 10
+                  periodSeconds: 30
+                  timeoutSeconds: 3
+              readiness:
+                custom: true
+                enabled: true
+                spec:
+                  httpGet:
+                    path: /healthz
+                    port: http
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                  timeoutSeconds: 3
+            resources:
+              limits:
+                memory: 512Mi
+              requests:
+                cpu: 50m
+                memory: 128Mi
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+              readOnlyRootFilesystem: true
+        strategy: Recreate
+        type: deployment
+    defaultPodOptions:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+    ingress:
+      app:
+        enabled: false
+    route:
+      app:
+        enabled: true
+        kind: HTTPRoute
+        hostnames:
+          - termine.$(SECRET_DOMAIN)
+        parentRefs:
+          - name: cilium-gateway
+            namespace: kube-system
+            sectionName: https-termine.$(SECRET_DOMAIN)
+          - name: cilium-gateway
+            namespace: kube-system
+            sectionName: http
+    persistence:
+      data:
+        accessMode: ReadWriteOnce
+        globalMounts:
+          - path: /data
+        size: 1Gi
+        storageClass: openebs-hostpath
+        type: persistentVolumeClaim
+      tmp:
+        globalMounts:
+          - path: /tmp
+        type: emptyDir
+    service:
+      app:
+        controller: terminagent
+        ports:
+          http:
+            port: 8000

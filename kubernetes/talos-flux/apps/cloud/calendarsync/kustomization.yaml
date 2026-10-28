@@ -1,0 +1,22 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloud
+resources:
+  - deployment.yaml
+  - pvc.yaml
+  - secret.yaml
+configMapGenerator:
+  - name: vdirsyncer-hooks
+    namespace: cloud
+    files:
+      - ./add_private_class.py
+#   - name: vdirsyncer-scripts
+#     namespace: cloud
+#     files:
+#       - anonymize.py
+#configurations:
+#  - kustomizeconfig.yaml
+generatorOptions:
+  disableNameSuffixHash: true

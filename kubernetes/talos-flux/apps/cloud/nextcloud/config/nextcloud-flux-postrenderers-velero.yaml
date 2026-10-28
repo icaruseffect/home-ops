@@ -1,0 +1,202 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nextcloud
+  namespace: cloud
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: nextcloud
+      version: 6.6.9
+      sourceRef:
+        kind: HelmRepository
+        name: nextcloud-charts
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  # Add postRenderers section to inject our hooks
+  postRenderers:
+    - kustomize:
+        patches:
+          # Add pre-upgrade maintenance hook
+          - patch: |
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: nextcloud-pre-upgrade-maintenance
+                namespace: cloud
+                annotations:
+                  helm.sh/hook: "pre-upgrade"
+                  helm.sh/hook-weight: "-5"
+                  helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+              spec:
+                template:
+                  spec:
+                    restartPolicy: Never
+                    containers:
+                    - name: maintenance-on
+                      image: ${image}
+                      securityContext:
+                        runAsUser: 0
+                      command:
+                      - /bin/bash
+                      - -c
+                      - |
+                        echo "[INFO] Enabling Nextcloud maintenance mode..."
+                        runuser -u www-data -- php /var/www/html/occ maintenance:mode --on
+                        echo "[INFO] Maintenance mode enabled successfully."
+                      volumeMounts:
+                      - name: nextcloud-data
+                        mountPath: /var/www/html
+                    volumes:
+                    - name: nextcloud-data
+                      persistentVolumeClaim:
+                        claimName: nextcloud-nextcloud
+            target:
+              kind: Job
+              name: nextcloud-pre-upgrade-maintenance
+
+          # Add pre-upgrade backup hook
+          - patch: |
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: nextcloud-pre-upgrade-backup
+                namespace: cloud
+                annotations:
+                  helm.sh/hook: "pre-upgrade"
+                  helm.sh/hook-weight: "-3"
+                  helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+              spec:
+                template:
+                  spec:
+                    serviceAccountName: velero-backup-creator
+                    restartPolicy: Never
+                    containers:
+                    - name: velero-backup
+                      image: velero/velero:latest
+                      command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        echo "[INFO] Creating Nextcloud backup before upgrade..."
+                        velero backup create nextcloud-pre-upgrade-$(date +%Y%m%d-%H%M%S) \
+                          --include-namespaces cloud,database \
+                          --include-resources persistentvolumeclaims,persistentvolumes \
+                          --wait
+                        echo "[INFO] Backup completed successfully."
+            target:
+              kind: Job
+              name: nextcloud-pre-upgrade-backup
+
+          # Add post-upgrade tasks hook
+          - patch: |
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: nextcloud-post-upgrade-tasks
+                namespace: cloud
+                annotations:
+                  helm.sh/hook: "post-upgrade"
+                  helm.sh/hook-weight: "5"
+                  helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+              spec:
+                backoffLimit: 3
+                template:
+                  spec:
+                    restartPolicy: Never
+                    containers:
+                    - name: post-upgrade
+                      image: ${image}
+                      securityContext:
+                        runAsUser: 0
+                      command:
+                      - /bin/bash
+                      - -c
+                      - |
+                        # Wait for Nextcloud to be fully ready
+                        echo "[INFO] Waiting for Nextcloud to be ready..."
+                        attempt=0
+                        max_attempts=30
+                        while [ $attempt -lt $max_attempts ]; do
+                          if curl -s -k -o /dev/null https://nextcloud.svc.cluster.local/status.php; then
+                            echo "[INFO] Nextcloud is ready. Proceeding with post-upgrade steps."
+                            break
+                          fi
+                          attempt=$((attempt+1))
+                          echo "[WARN] Attempt $attempt/$max_attempts: Nextcloud not ready yet, waiting..."
+                          sleep 10
+                        done
+
+                        if [ $attempt -eq $max_attempts ]; then
+                          echo "[ERROR] Nextcloud did not become ready in time. Proceeding with post-upgrade steps anyway."
+                        fi
+
+                        # Run the Nextcloud upgrade process
+                        echo "[INFO] Running Nextcloud occ upgrade..."
+                        runuser -u www-data -- php /var/www/html/occ upgrade
+                        if [ $? -ne 0 ]; then
+                          echo "[ERROR] Nextcloud upgrade failed. Check logs for details."
+                          exit 1
+                        else
+                          echo "[INFO] Nextcloud upgrade completed successfully."
+                        fi
+
+                        # Update apps after core upgrade
+                        echo "[INFO] Updating all apps..."
+                        runuser -u www-data -- php /var/www/html/occ app:update --all
+                        if [ $? -ne 0 ]; then
+                          echo "[WARN] Some app updates may have failed. Check logs for details."
+                        else
+                          echo "[INFO] All apps updated successfully."
+                        fi
+
+                        # Run post-upgrade file scan
+                        echo "[INFO] Running post-upgrade file scan..."
+                        runuser -u www-data -- php /var/www/html/occ files:scan --all
+                        if [ $? -ne 0 ]; then
+                          echo "[WARN] File scan completed with issues. Check logs for details."
+                        else
+                          echo "[INFO] File scan completed successfully."
+                        fi
+
+                        # Run database integrity check
+                        echo "[INFO] Checking database integrity..."
+                        runuser -u www-data -- php /var/www/html/occ db:add-missing-indices
+                        if [ $? -ne 0 ]; then
+                          echo "[WARN] Database integrity check completed with issues. Check logs for details."
+                        else
+                          echo "[INFO] Database integrity check completed successfully."
+                        fi
+
+                        # Disable maintenance mode
+                        echo "[INFO] Disabling maintenance mode..."
+                        runuser -u www-data -- php /var/www/html/occ maintenance:mode --off
+                        if [ $? -ne 0 ]; then
+                          echo "[ERROR] Failed to disable maintenance mode. Check logs for details."
+                          exit 1
+                        else
+                          echo "[INFO] Maintenance mode disabled successfully."
+                        fi
+                      volumeMounts:
+                      - name: nextcloud-data
+                        mountPath: /var/www/html
+                    volumes:
+                    - name: nextcloud-data
+                      persistentVolumeClaim:
+                        claimName: nextcloud-nextcloud
+            target:
+              kind: Job
+              name: nextcloud-post-upgrade-tasks
+  valuesFrom:
+    - kind: ConfigMap
+      name: nextcloud-helm-values

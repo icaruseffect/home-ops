@@ -4,7 +4,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # TODO: decide if i want to add the config directory or not
 resources:
-  - remoteip.conf
   - cnp-nextcloud-internal-ingress.yaml
   - cnp-nextcloud-metrics.yaml
 
