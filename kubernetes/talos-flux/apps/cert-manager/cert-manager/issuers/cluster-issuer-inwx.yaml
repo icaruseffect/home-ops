@@ -1,0 +1,28 @@
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: inwx
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: enabled
+spec:
+  acme:
+    email: ${SECRET_EMAIL}
+    privateKeySecretRef:
+      name: inwx-key
+    server: https://acme-v02.api.letsencrypt.org/directory
+    solvers:
+      - dns01:
+          webhook:
+            config:
+              otpKeySecretKeyRef:
+                key: otpKey
+                name: inwx-credentials
+              passwordSecretKeyRef:
+                key: password
+                name: inwx-credentials
+              usernameSecretKeyRef:
+                key: username
+                name: inwx-credentials
+            groupName: cert-manager-webhook-inwx.github.com
+            solverName: inwx

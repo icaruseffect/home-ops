@@ -1,0 +1,21 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: cert-manager-webhook-inwx-fork
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: https://github.com/sockmister/cert-manager-webhook-inwx.git
+  ref:
+    branch: master
+  ignore: |
+    /\.git/
+    /.gitignore
+    /README.md
+    /LICENSE
+    /CHANGELOG.md
+    /Makefile
+    /Dockerfile
+    /.dockerignore
+    /.gitlab-ci.yml

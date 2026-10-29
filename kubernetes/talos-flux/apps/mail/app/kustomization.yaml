@@ -9,6 +9,7 @@ resources:
   - mail-ports-external.yaml
   - secret-env-stalwart.sops.yaml
   - servicemonitor.yaml
+  - tls-certificate.yaml
 configMapGenerator:
   - name: values-stalwart-mail
     namespace: mail
