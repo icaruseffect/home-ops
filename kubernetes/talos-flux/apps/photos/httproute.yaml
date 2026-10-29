@@ -24,14 +24,17 @@ spec:
       filters:
         - type: ExternalAuth
           externalAuth:
-            protocol: GRPC
-            grpc: {}
+            # HTTP mode: cilium leaves GrpcService.Timeout unset → envoy's
+            # 200ms default (cilium#48906); the bouncer serves Check on :8081
+            # where the HTTP transport gets its proper timeout.
+            protocol: HTTP
+            http: {}
             backendRef:
               group: ""
               kind: Service
               name: envoy-crowdsec-bouncer
               namespace: crowdsec
-              port: 8080
+              port: 8081
       backendRefs:
         - name: noodle-gallery-server
           port: 2283
