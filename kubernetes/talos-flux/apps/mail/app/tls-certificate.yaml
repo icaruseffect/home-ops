@@ -1,0 +1,15 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: stalwart-mail-tls
+  namespace: mail
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: enabled
+spec:
+  secretName: stalwart-mail-cert
+  dnsNames:
+    - mail.${SECRET_DOMAIN}
+  issuerRef:
+    name: inwx
+    kind: ClusterIssuer
