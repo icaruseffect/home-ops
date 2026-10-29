@@ -12,7 +12,7 @@ metadata:
   labels:
     app.kubernetes.io/name: envoy-crowdsec-bouncer
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: envoy-crowdsec-bouncer
@@ -24,7 +24,7 @@ spec:
       serviceAccountName: envoy-crowdsec-bouncer
       containers:
         - name: bouncer
-          image: ghcr.io/kdwils/envoy-proxy-bouncer:v0.8.1
+          image: ghcr.io/kdwils/envoy-proxy-bouncer:v0.8.3
           env:
             # viper: prefix ENVOY_BOUNCER, key path bouncer.lapiUrl →
             # ENVOY_BOUNCER_BOUNCER_LAPIURL (chart uses the same mapping for
@@ -92,7 +92,7 @@ metadata:
   namespace: crowdsec
 ---
 # minAvailable 1: the gateway fail-closes (403, UAEX) when no bouncer
-# endpoint answers, so evictions must never drain both replicas.
+# endpoint answers, so evictions must never drain the last replica.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
