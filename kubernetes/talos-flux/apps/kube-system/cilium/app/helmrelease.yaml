@@ -10,9 +10,9 @@ spec:
   chart:
     spec:
       chart: *app
-      # minor pinned, patch floats: 1.20.3+ carries the endpoint GC/ADS
-      # fixes for the recurring L7-policy wedge; CVE patches land too
-      version: 1.20.x
+      # major pinned only: minor+patch float. 1.20.3+ carries the
+      # endpoint GC/ADS fixes for the recurring L7-policy wedge.
+      version: 1.x
       sourceRef:
         kind: HelmRepository
         name: cilium-charts
