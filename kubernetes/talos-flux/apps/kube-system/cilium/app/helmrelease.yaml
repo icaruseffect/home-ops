@@ -10,7 +10,7 @@ spec:
   chart:
     spec:
       chart: *app
-      version: 1.20.2
+      version: 1.20.4
       sourceRef:
         kind: HelmRepository
         name: cilium-charts
@@ -19,6 +19,9 @@ spec:
     remediation:
       retries: 3
   upgrade:
+    # single-node agent restore takes ~5-10m; helm's 5m default burned all
+    # remediation retries into a rollback on the first 1.20.4 attempt
+    timeout: 15m
     cleanupOnFail: true
     remediation:
       strategy: rollback
