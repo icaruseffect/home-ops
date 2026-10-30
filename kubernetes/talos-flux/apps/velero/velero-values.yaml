@@ -1,5 +1,5 @@
 ---
-# Velero chart 12.x (vmware-tanzu-charts) -- kopia uploader, backups to Contabo bucket backup-cloud.
+# Velero chart 12.x (vmware-tanzu-charts) -- kopia uploader, backups to Backblaze B2 bucket velero-cloud.
 # Defaults for everything not listed here are the chart defaults.
 image:
   repository: velero/velero
@@ -54,7 +54,7 @@ configuration:
   backupStorageLocation:
     - name: default
       provider: aws
-      bucket: backup-cloud
+      bucket: velero-cloud
       prefix: velero
       default: true
       credential:
@@ -62,9 +62,9 @@ configuration:
         key: cloud
       config:
         profile: default
-        region: EU
+        region: eu-central-003
         s3ForcePathStyle: "true"
-        s3Url: https://eu2.contabostorage.com
+        s3Url: https://s3.eu-central-003.backblazeb2.com
   volumeSnapshotLocation: []
 
 upgradeCRDs: true
