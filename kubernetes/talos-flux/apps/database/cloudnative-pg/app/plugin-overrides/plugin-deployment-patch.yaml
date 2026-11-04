@@ -1,0 +1,12 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plugin-barman-cloud
+spec:
+  template:
+    spec:
+      volumes:
+        - name: client
+          secret:
+            secretName: barman-cloud-ca-tls

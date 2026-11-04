@@ -39,3 +39,8 @@ spec:
     # cert-manager assumed already installed cluster-wide
     cert-manager:
       enabled: false
+    # Use our CA instead of the selfSigned issuer (which produced leaves with
+    # ca.crt being the leaf itself, breaking Go TLS after 2026-10-30 renewal).
+    certificate:
+      createIssuer: false
+      issuerName: barman-cloud-ca

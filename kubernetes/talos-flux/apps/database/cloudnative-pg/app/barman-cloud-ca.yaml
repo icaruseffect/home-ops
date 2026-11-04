@@ -1,0 +1,39 @@
+---
+# Bootstrap issuer: signs only the root CA certificate itself.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: barman-cloud-ca-bootstrap
+  namespace: database
+spec:
+  selfSigned: {}
+---
+# Root CA for the plugin-barman-cloud mTLS pair. rotationPolicy Never keeps
+# the key stable across renewals so the chain pinned into the plugin and
+# client secrets stays verifiable.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: barman-cloud-ca
+  namespace: database
+spec:
+  isCA: true
+  commonName: barman-cloud-ca
+  secretName: barman-cloud-ca-tls
+  duration: 87600h
+  renewBefore: 8760h
+  privateKey:
+    rotationPolicy: Never
+  issuerRef:
+    kind: Issuer
+    name: barman-cloud-ca-bootstrap
+---
+# CA Issuer consumed by the chart via certificate.issuerName.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: barman-cloud-ca
+  namespace: database
+spec:
+  ca:
+    secretName: barman-cloud-ca-tls
