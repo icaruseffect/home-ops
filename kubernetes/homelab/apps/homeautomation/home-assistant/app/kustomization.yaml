@@ -15,11 +15,17 @@ resources:
   - pvc-backups.yaml
   - cm-home-assistant.yaml
   - secret-homeassistant-db.sops.yaml
+  - home-assistant-secrets.sops.yaml
   # - cm-home-intermediate-ca.yaml
   # - networkattachmentdefinition.yaml
 configMapGenerator:
   - name: home-assistant-values
     files:
       - home-assistant-values.yaml
+    options:
+      disableNameSuffixHash: true
+  - name: home-assistant-thermostat
+    files:
+      - thermostat_wohnzimmer.yaml
     options:
       disableNameSuffixHash: true

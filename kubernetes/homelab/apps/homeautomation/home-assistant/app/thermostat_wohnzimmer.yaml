@@ -1,0 +1,99 @@
+---
+template:
+  - sensor:
+      - name: thermostat_wohnzimmer_external_temp
+        unique_id: thermostat_wohnzimmer_external_temp
+        state: "{{ states('sensor.wohnzimmer_aqm_temperature') }}"
+        availability: >-
+          {{ is_number(states('sensor.wohnzimmer_aqm_temperature'))
+             and (now() - states.sensor.wohnzimmer_aqm_temperature.last_reported).total_seconds() < 900 }}
+        unit_of_measurement: "°C"
+        device_class: temperature
+
+input_number:
+  thermostat_wohnzimmer_original_calibration:
+    name: Thermostat Wohnzimmer original calibration
+    min: -12.7
+    max: 12.7
+    step: 0.2
+    unit_of_measurement: "°C"
+
+input_boolean:
+  thermostat_wohnzimmer_aqm_calibration_active:
+    name: Thermostat Wohnzimmer AQM calibration active
+
+automation:
+  - id: calibrate_thermostat_wohnzimmer_to_aqm
+    alias: Calibrate Thermostat Wohnzimmer to AQM
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: state
+        entity_id: sensor.thermostat_wohnzimmer_external_temp
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ is_number(states('sensor.thermostat_wohnzimmer_external_temp'))
+             and is_number(states('number.thermostat_wohnzimmer_local_temperature_calibration'))
+             and is_number(state_attr('climate.thermostat_wohnzimmer', 'current_temperature')) }}
+    actions:
+      - if:
+          - condition: state
+            entity_id: input_boolean.thermostat_wohnzimmer_aqm_calibration_active
+            state: "off"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.thermostat_wohnzimmer_original_calibration
+            data:
+              value: "{{ states('number.thermostat_wohnzimmer_local_temperature_calibration') | float }}"
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.thermostat_wohnzimmer_aqm_calibration_active
+      - condition: template
+        value_template: >-
+          {{ (states('sensor.thermostat_wohnzimmer_external_temp') | float
+              - state_attr('climate.thermostat_wohnzimmer', 'current_temperature') | float) | abs > 0.5 }}
+      # Reported local temperature already includes the current offset.
+      - action: number.set_value
+        target:
+          entity_id: number.thermostat_wohnzimmer_local_temperature_calibration
+        data:
+          value: >-
+            {% set offset = states('number.thermostat_wohnzimmer_local_temperature_calibration') | float
+                + states('sensor.thermostat_wohnzimmer_external_temp') | float
+                - state_attr('climate.thermostat_wohnzimmer', 'current_temperature') | float %}
+            {{ ([12.6, [-12.6, ((offset / 0.2) | round) * 0.2] | max] | min) | round(1) }}
+      # Allow the thermostat to report the corrected temperature before another adjustment.
+      - delay: "00:02:00"
+
+  - id: fallback_to_thermostat_internal_sensor
+    alias: Fallback to Thermostat Internal Sensor
+    mode: single
+    triggers:
+      - trigger: template
+        value_template: "{{ not is_number(states('sensor.thermostat_wohnzimmer_external_temp')) }}"
+        for: "00:10:00"
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.thermostat_wohnzimmer_aqm_calibration_active
+        state: "on"
+      - condition: template
+        value_template: >-
+          {{ not is_number(states('sensor.thermostat_wohnzimmer_external_temp'))
+             and (now() - states.sensor.thermostat_wohnzimmer_external_temp.last_changed).total_seconds() >= 600
+             and is_number(states('number.thermostat_wohnzimmer_local_temperature_calibration'))
+             and is_number(states('input_number.thermostat_wohnzimmer_original_calibration')) }}
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.thermostat_wohnzimmer_local_temperature_calibration
+        data:
+          value: "{{ states('input_number.thermostat_wohnzimmer_original_calibration') | float }}"
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.thermostat_wohnzimmer_aqm_calibration_active

@@ -59,7 +59,7 @@ spec:
           path: "session.encryption.key"
         cookies:
           - subdomain: "auth"
-            domain: "klingel.cloud"
+            domain: "${SECRET_DOMAIN}"
         redis:
           enabled: true
           host: "dragonfly.database.svc.cluster.local"
@@ -84,11 +84,11 @@ spec:
         disable_startup_check: false
         smtp:
           enabled: true
-          identifier: "klingel.cloud"
-          startup_check_address: "auth@klingel.cloud"
-          address: "submission://mail.klingel.cloud:587"
-          sender: "auth@klingel.cloud"
-          username: "auth@klingel.cloud"
+          identifier: "${SECRET_DOMAIN}"
+          startup_check_address: "auth@${SECRET_DOMAIN}"
+          address: "submission://mail.${SECRET_DOMAIN}:587"
+          sender: "auth@${SECRET_DOMAIN}"
+          username: "auth@${SECRET_DOMAIN}"
           password:
             secret_name: "authelia-secrets"
             path: "notifier.smtp.password"
@@ -106,7 +106,7 @@ spec:
       access_control:
         default_policy: "one_factor"
         rules:
-          - domain: "cloud.klingel.cloud"
+          - domain: "cloud.${SECRET_DOMAIN}"
             policy: "two_factor"
       webauthn:
         disable: false
@@ -149,7 +149,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.nextcloud.client_secret"
               public: false
               redirect_uris:
-                - "https://cloud.klingel.cloud/apps/user_oidc/code"
+                - "https://cloud.${SECRET_DOMAIN}/apps/user_oidc/code"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "two_factor"
@@ -161,8 +161,8 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.noodle-gallery.client_secret"
               public: false
               redirect_uris:
-                - "https://photos.klingel.cloud/auth/login"
-                - "https://photos.klingel.cloud/user-settings"
+                - "https://photos.${SECRET_DOMAIN}/auth/login"
+                - "https://photos.${SECRET_DOMAIN}/user-settings"
                 - "app.immich:///oauth-callback"
               scopes: ["openid", "profile", "email"]
               grant_types: ["authorization_code"]
@@ -175,7 +175,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.miniflux.client_secret"
               public: false
               redirect_uris:
-                - "https://reader.klingel.cloud/oauth2/oidc/callback"
+                - "https://reader.${SECRET_DOMAIN}/oauth2/oidc/callback"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"
@@ -187,7 +187,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.open-webui.client_secret"
               public: false
               redirect_uris:
-                - "https://chat.klingel.cloud/oauth/oidc/callback"
+                - "https://chat.${SECRET_DOMAIN}/oauth/oidc/callback"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"
@@ -199,7 +199,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.grafana.client_secret"
               public: false
               redirect_uris:
-                - "https://grafana.klingel.cloud/login/generic_oauth"
+                - "https://grafana.${SECRET_DOMAIN}/login/generic_oauth"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"
@@ -211,7 +211,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.hoarder.client_secret"
               public: false
               redirect_uris:
-                - "https://hoarder.klingel.cloud/api/auth/callback/custom"
+                - "https://hoarder.${SECRET_DOMAIN}/api/auth/callback/custom"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"
@@ -224,7 +224,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.velociraptor.client_secret"
               public: false
               redirect_uris:
-                - "https://velo-gui.klingel.cloud/auth/oidc/callback"
+                - "https://velo-gui.${SECRET_DOMAIN}/auth/oidc/callback"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"
@@ -236,7 +236,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.calibre-web.client_secret"
               public: false
               redirect_uris:
-                - "https://books.klingel.cloud/login/generic/authorized"
+                - "https://books.${SECRET_DOMAIN}/login/generic/authorized"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"
@@ -248,7 +248,7 @@ spec:
                 path: "/secrets/authelia-secrets/identity_providers.oidc.clients.terminagent.client_secret"
               public: false
               redirect_uris:
-                - "https://termine.klingel.cloud/auth/callback"
+                - "https://termine.${SECRET_DOMAIN}/auth/callback"
               scopes: ["openid", "groups", "profile", "email"]
               consent_mode: "implicit"
               claims_policy: "legacy_id_token"
@@ -273,6 +273,7 @@ spec:
               public: false
               redirect_uris:
                 - "https://hass.lab.lan/auth/openid/callback"
+                - "https://ha.${SECRET_DOMAIN}/auth/openid/callback"
               scopes: ["openid", "groups", "profile", "email"]
               grant_types: ["authorization_code", "refresh_token"]
               authorization_policy: "one_factor"

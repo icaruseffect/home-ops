@@ -5,6 +5,10 @@ data:
     # Loads default set of integrations. Do not remove.
     default_config:
 
+    homeassistant:
+      packages: !include_dir_named packages
+
+
     assist_pipeline:
 
     http:
@@ -68,8 +72,8 @@ data:
 
 
     openid:
-      client_id: !secret openid_client_id
-      client_secret: !secret openid_client_secret
+      client_id: !secret openid_id
+      client_secret: !secret openid_secret
       configure_url: !secret openid_configure_url
       username_field: "preferred_username"  # Adjust based on your IdP's user info response
       scope: "openid profile email"

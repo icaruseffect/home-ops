@@ -71,6 +71,8 @@ rev = "v0.9.0"
 hooks = [
   {
     id = "check-flux-helm-values",
+    # Flux substitutes SECRET_DOMAIN before Helm; lint with a non-secret example domain.
+    entry = "python scripts/check-flux-helm-values.py",
     priority = 1,
     exclude = """
 (?x)^(
