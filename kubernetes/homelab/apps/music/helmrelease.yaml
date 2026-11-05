@@ -34,15 +34,9 @@ spec:
               kind: Deployment
               name: music-assistant-server
             patch: |
-              # ports/0 is containerPort 8095 (web), ports/1 is 8097 (stream).
-              # MA's streams.publish_ip is the node IP, so both must be
-              # reachable there; hostPort keeps that true without hostNetwork.
               - op: add
-                path: /spec/template/spec/containers/0/ports/0/hostPort
-                value: 8095
-              - op: add
-                path: /spec/template/spec/containers/0/ports/1/hostPort
-                value: 8097
+                path: /spec/template/spec/dnsPolicy
+                value: ClusterFirstWithHostNet
               - op: add
                 path: /spec/template/spec/volumes/-
                 value:
