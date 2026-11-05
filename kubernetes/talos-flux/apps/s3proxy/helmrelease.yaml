@@ -42,7 +42,7 @@ spec:
               - --addr=:8080
               - --config=/config/rclone.conf
               - --no-modtime
-              - --dir-cache-time=5s
+              - --dir-cache-time=1h
               - --poll-interval=0
             env:
               RCLONE_AUTH_KEY:
