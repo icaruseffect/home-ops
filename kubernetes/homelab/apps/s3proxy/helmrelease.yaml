@@ -54,7 +54,14 @@ spec:
                 cpu: 50m
                 memory: 64Mi
               limits:
-                memory: 512Mi
+                memory: 1Gi
+            probes:
+              readiness:
+                enabled: true
+                custom: true
+                spec:
+                  tcpSocket:
+                    port: 8080
 
     service:
       main:
