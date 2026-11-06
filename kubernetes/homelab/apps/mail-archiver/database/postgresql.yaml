@@ -4,8 +4,7 @@ kind: Cluster
 metadata:
   name: mail-archiver-postgres-cluster
   namespace: mail-archiver
-  annotations:
-    k8up.io/backup: "true"
+  annotations: {}
 spec:
   instances: 1
 
