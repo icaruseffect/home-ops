@@ -49,6 +49,7 @@
 - [Roadmap](#roadmap)
 - [🕵️ Troubleshooting](#%EF%B8%8F-troubleshooting)
   - [Stuck HelmRelease](#stuck-helmrelease)
+  - [Nextcloud DAV discovery redirects](#nextcloud-dav-discovery-redirects)
 - [Quality](#quality)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -173,6 +174,33 @@ example:
 ✔ HelmRelease reconciliation completed
 ✔ applied revision 10.9.1
 ```
+
+### Nextcloud DAV discovery redirects
+
+The Nextcloud chart values in
+`kubernetes/talos-flux/apps/cloud/nextcloud/app/values.yaml` replace the chart's
+built-in well-known redirects with exact CalDAV/CardDAV rules targeting
+`https://<nextcloud-host>/remote.php/dav/`. Cilium suppresses an explicit
+`scheme: https` redirect when `X-Forwarded-Proto` is already `https`, so a
+header-qualified, path-only rule handles HTTPS and a second rule upgrades HTTP.
+Keep both rules; Apache's own discovery redirect uses the backend HTTP connection.
+
+Verify both `/.well-known/caldav` and `/.well-known/carddav` with `curl -sSI`
+over HTTP and HTTPS: each must return `301` with an HTTPS `Location`. An explicit
+`:443` is equivalent to the default HTTPS port. Authenticated `PROPFIND` at the
+destination should return `207`.
+
+If a changed HTTPRoute has no status and Envoy retains old routes, inspect
+`cilium-operator` startup logs for Gateway API initialization errors. After
+correcting CRD availability or permissions, restart the operator to retry
+initialization; restarting Nextcloud does not reconcile gateway routes. A
+HelmRelease's `Ready` status alone does not prove its HTTPRoute is programmed.
+
+Preserve the existing `nextcloud-nextcloud` and `nextcloud-nextcloud-data` PVCs.
+`nextcloud-main: emptyDir` explains a fresh-install bootstrap; verify the volume
+sources and `occ config:system:get dbtype` (`pgsql`) before treating startup as
+healthy. Do not delete the HelmRelease to request reconciliation. Use a new
+`reconcile.fluxcd.io/requestedAt` timestamp (and matching `forceAt` when needed).
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
