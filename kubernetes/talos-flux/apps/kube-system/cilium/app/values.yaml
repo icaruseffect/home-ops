@@ -40,11 +40,11 @@ hubble:
       labels:
         release: prometheus-stack
   tls:
-    enabled: true
-    auto:
-      enabled: true
-      method: cronJob
-      schedule: "0 0 1 */6 *"
+    enabled: false
+    # auto:
+    #   enabled: true
+    #   method: cronJob
+    #   schedule: "0 0 1 */6 *"
 
 gatewayAPI:
   enabled: true
