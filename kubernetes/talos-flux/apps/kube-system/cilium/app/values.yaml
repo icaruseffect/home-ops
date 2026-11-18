@@ -21,10 +21,10 @@ encryption:
 
 hubble:
   relay:
-    enabled: true
+    enabled: false
     replicas: 1
   ui:
-    enabled: true
+    enabled: false
     replicas: 1
     rollOutPods: true
   metrics:
