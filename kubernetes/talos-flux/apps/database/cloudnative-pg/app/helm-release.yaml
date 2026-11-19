@@ -37,3 +37,17 @@ spec:
       grafanaDashboard:
         create: true
       podMonitorEnabled: true
+    # Mount barman-cloud CA so the operator's gRPC client can verify the
+    # plugin's server cert (issued by barman-cloud-ca).
+    additionalVolumes:
+      - name: barman-ca
+        secret:
+          secretName: barman-cloud-ca-tls
+          defaultMode: 420
+    additionalVolumeMounts:
+      - name: barman-ca
+        mountPath: /controller/barman-ca
+        readOnly: true
+    additionalEnv:
+      - name: GRPC_DEFAULT_SSL_ROOTS
+        value: /controller/barman-ca/ca.crt

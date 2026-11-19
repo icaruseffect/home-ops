@@ -14,7 +14,7 @@ spec:
         kind: HelmRepository
         name: cloudnative-pg-charts
         namespace: flux-system
-      version: 0.x
+      version: 0.8.1
   timeout: 10m # slow node: don't let a 5m wait trigger a rollback
   install:
     remediation:
