@@ -1,3 +1,4 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,6 +41,13 @@ spec:
               mountPath: /calibre-library
             - name: book-ingest
               mountPath: /cwa-book-ingest
+          startupProbe:
+            httpGet:
+              path: /login
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 15
+            failureThreshold: 120 # 20 min startup budget; Calibre install is multi-minute
           livenessProbe:
             httpGet:
               path: /login
