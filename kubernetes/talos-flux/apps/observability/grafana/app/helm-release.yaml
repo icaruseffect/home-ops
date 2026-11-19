@@ -99,17 +99,17 @@ spec:
                 name: envoy-crowdsec-bouncer
                 namespace: crowdsec
                 port: 8080
-    ingress: null
-    enabled: true
-    ingressClassName: cilium
-    annotations: null
-    cert-manager.io/cluster-issuer: letsencrypt-production
-    gethomepage.dev/enabled: "true"
-    gethomepage.dev/description: Metrics, logs, traces, and profiles, oh my!
-    gethomepage.dev/group: Observability
-    gethomepage.dev/icon: grafana
-    gethomepage.dev/name: Grafana Dashboard
-    gethomepage.dev/weight: "10"
+    ingress:
+      enabled: true
+      ingressClassName: cilium
+      annotations:
+        cert-manager.io/cluster-issuer: inwx
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/description: Metrics, log, traces, and profiles!
+        gethomepage.dev/group: Observability
+        gethomepage.dev/icon: grafana
+        gethomepage.dev/name: Grafana Dashboard
+        gethomepage.dev/weight: "10"
     hosts:
       - grafana.${SECRET_DOMAIN}
     path: /

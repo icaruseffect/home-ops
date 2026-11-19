@@ -33,7 +33,7 @@ spec:
       enabled: true
       className: cilium
       annotations:
-        cert-manager.io/cluster-issuer: letsencrypt-production
+        cert-manager.io/cluster-issuer: inwx
       hosts:
         - host: ntfy.${SECRET_DOMAIN}
           paths:

@@ -106,8 +106,7 @@ ingress:
   className: cilium
   annotations:
     ingress.cilium.io/force-https: disabled
-    cert-manager.io/cluster-issuer: letsencrypt-production
-    acme.cert-manager.io/http01-edit-in-place: "true"
+    cert-manager.io/cluster-issuer: inwx
   #  # Keep this in sync with the README.md:
   # nginx.ingress.kubernetes.io/server-snippet: |-
   # server_tokens off;
